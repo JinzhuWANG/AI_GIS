@@ -7,53 +7,69 @@ import warnings
 warnings.filterwarnings('ignore')
 
 class ChunkDataset(Dataset):
-    """Dataset for processing chunks of 90m DEM data"""
-    def __init__(self, dem_90m, chunk_size=128):
+    """Dataset for processing chunks of 90m DEM data with buffer for edge effect reduction"""
+    def __init__(self, dem_90m, chunk_size=128, buffer_size=8, stride=128):
         self.chunk_size = chunk_size
+        self.buffer_size = buffer_size
         self.chunks = []
         self.chunk_positions = []
         
+        # Input size with buffer
+        self.input_size = chunk_size + 2 * buffer_size  # 128 + 16 = 144
+        
         # Get data dimensions
         height, width = dem_90m.shape
-        print(f"Processing {height}x{width} data into {chunk_size}x{chunk_size} chunks")
+        print(f"Processing {height}x{width} data into {self.input_size}x{self.input_size} chunks (including {buffer_size}-pixel buffer)")
         
-        # Create chunks by sliding window
-        for i in range(0, height, chunk_size):
-            for j in range(0, width, chunk_size):
-                end_i = min(i + chunk_size, height)
-                end_j = min(j + chunk_size, width)
+        # Create chunks by sliding window with stride
+        for i in range(0, height, stride):
+            for j in range(0, width, stride):
+                # Calculate chunk region with buffer
+                start_i = max(0, i - buffer_size)
+                start_j = max(0, j - buffer_size)
+                end_i = min(i + chunk_size + buffer_size, height)
+                end_j = min(j + chunk_size + buffer_size, width)
                 
                 # Extract chunk using isel
-                chunk = dem_90m.isel(y=slice(i, end_i), x=slice(j, end_j))
+                chunk = dem_90m.isel(y=slice(start_i, end_i), x=slice(start_j, end_j))
                 
                 if chunk.size > 0:  # Skip empty chunks
                     # Get the actual data array
                     data = chunk.values.astype(np.float32)
                     h, w = data.shape
                     
-                    # If chunk is smaller than target size, pad it
-                    if h < chunk_size or w < chunk_size:
-                        padded_data = np.zeros((chunk_size, chunk_size), dtype=np.float32)
-                        padded_data[:h, :w] = data
-                        data = padded_data
-                    elif h > chunk_size or w > chunk_size:
-                        # Crop to target size
-                        data = data[:chunk_size, :chunk_size]
+                    # Create a properly sized array with buffer
+                    padded_data = np.zeros((self.input_size, self.input_size), dtype=np.float32)
+                    
+                    # Calculate padding needed (for edge chunks)
+                    pad_top = buffer_size - (i - start_i)
+                    pad_left = buffer_size - (j - start_j)
+                    pad_bottom = (i + chunk_size + buffer_size) - end_i
+                    pad_right = (j + chunk_size + buffer_size) - end_j
+                    
+                    # Place actual data in the padded array at the right position
+                    y_offset = max(0, pad_top)
+                    x_offset = max(0, pad_left)
+                    padded_data[y_offset:y_offset+h, x_offset:x_offset+w] = data
                     
                     # Normalize the chunk (min-max normalization like in training)
-                    data_min, data_max = data.min(), data.max()
+                    data_min, data_max = padded_data.min(), padded_data.max()
                     if data_max > data_min:
-                        normalized_data = (data - data_min) / (data_max - data_min)
+                        normalized_data = (padded_data - data_min) / (data_max - data_min)
                     else:
-                        normalized_data = data.copy()
+                        normalized_data = padded_data.copy()
                     
                     self.chunks.append(normalized_data)
                     self.chunk_positions.append({
-                        'y_start': i,
-                        'x_start': j,
-                        'y_end': end_i,
-                        'x_end': end_j,
-                        'original_shape': (h, w),
+                        'y_start': i,  # Original grid position (without buffer)
+                        'x_start': j,  # Original grid position (without buffer)
+                        'y_end': min(i + chunk_size, height),  # End position (without buffer)
+                        'x_end': min(j + chunk_size, width),   # End position (without buffer)
+                        'has_buffer_top': pad_top <= 0,
+                        'has_buffer_left': pad_left <= 0,
+                        'has_buffer_bottom': pad_bottom <= 0,
+                        'has_buffer_right': pad_right <= 0,
+                        'buffer_size': buffer_size,
                         'min_val': float(data_min),
                         'max_val': float(data_max)
                     })
@@ -68,7 +84,7 @@ class ChunkDataset(Dataset):
         chunk_tensor = torch.FloatTensor(self.chunks[idx]).unsqueeze(0)  # Add channel dim
         return chunk_tensor, self.chunk_positions[idx]
 
-def chunk_based_inference(model, dem_90m, batch_size=8, chunk_size=128):
+def chunk_based_inference(model, dem_90m, batch_size=8, chunk_size=128, buffer_size=8):
     """
     Perform inference using chunked data approach following step 3-1 model requirements
     """
@@ -96,8 +112,8 @@ def chunk_based_inference(model, dem_90m, batch_size=8, chunk_size=128):
     # Initialize empty 30m data array
     dem_30m_data = np.zeros((output_height, output_width), dtype=np.float32)
     
-    # Create dataset (this handles chunking internally)
-    dataset = ChunkDataset(dem_90m, chunk_size)
+    # Create dataset with buffer (this handles chunking and buffering internally)
+    dataset = ChunkDataset(dem_90m, chunk_size=chunk_size, buffer_size=buffer_size, stride=chunk_size)
     
     # Simple dataloader that handles tensors properly
     def simple_collate_fn(batch):
@@ -121,12 +137,8 @@ def chunk_based_inference(model, dem_90m, batch_size=8, chunk_size=128):
             # Move to device - chunks already have channel dimension
             chunk_batch = chunk_batch.to(device)  # [batch, 1, 128, 128]
             
-            # Perform batch inference (128x128 -> 416x416)
-            predictions = model(chunk_batch)  # [batch, 1, 416, 416]
-            
-            # Clip the 32-pixel buffer to get the original 384x384 output
-            buffer_size = 16  # 32 / 2 = 16 pixels on each side
-            predictions = predictions[:, :, buffer_size:-buffer_size, buffer_size:-buffer_size]  # [batch, 1, 384, 384]
+            # Perform batch inference on buffered inputs (144x144 -> 432x432)
+            predictions = model(chunk_batch)  # [batch, 1, 432, 432]
             predictions = predictions.cpu().numpy().squeeze()  # Remove channel dimension
             
             # Handle single item batch
@@ -136,7 +148,7 @@ def chunk_based_inference(model, dem_90m, batch_size=8, chunk_size=128):
             # Process each prediction and map to 30m grid
             current_batch_size = len(chunk_batch)
             for i in range(current_batch_size):
-                prediction = predictions[i]  # 384x384
+                prediction = predictions[i]  # 432x432
                 pos_info = position_batch[i]  # Dictionary with position info
                 
                 # Denormalize prediction
@@ -145,31 +157,48 @@ def chunk_based_inference(model, dem_90m, batch_size=8, chunk_size=128):
                 if max_val > min_val:
                     prediction = prediction * (max_val - min_val) + min_val
                 
-                # Calculate where this prediction should go in the 30m grid
+                # Extract position info
                 y_start_90m = pos_info['y_start']
                 x_start_90m = pos_info['x_start']
-                orig_h, orig_w = pos_info['original_shape']
+                y_end_90m = pos_info['y_end']
+                x_end_90m = pos_info['x_end']
+                buffer_size = pos_info['buffer_size']
+                
+                # Buffer size in output space (3x scaling)
+                buffer_size_30m = buffer_size * 3
                 
                 # Map to 30m coordinates (3x scaling)
                 start_y_30m = y_start_90m * 3
                 start_x_30m = x_start_90m * 3
+                end_y_30m = y_end_90m * 3
+                end_x_30m = x_end_90m * 3
                 
-                # Calculate the actual size of the prediction to use
-                pred_h_to_use = min(384, orig_h * 3)
-                pred_w_to_use = min(384, orig_w * 3)
+                # Calculate the slice of the prediction to use (remove buffer)
+                # Always use central part of the prediction
+                pred_y_start = buffer_size_30m
+                pred_x_start = buffer_size_30m
+                pred_y_end = buffer_size_30m + (y_end_90m - y_start_90m) * 3
+                pred_x_end = buffer_size_30m + (x_end_90m - x_start_90m) * 3
                 
                 # Make sure we don't exceed the output boundaries
-                end_y_30m = min(start_y_30m + pred_h_to_use, output_height)
-                end_x_30m = min(start_x_30m + pred_w_to_use, output_width)
+                end_y_30m = min(end_y_30m, output_height)
+                end_x_30m = min(end_x_30m, output_width)
                 
                 # Calculate actual dimensions to copy
                 actual_h = end_y_30m - start_y_30m
                 actual_w = end_x_30m - start_x_30m
                 
-                # Place prediction in 30m grid
+                # Place prediction in 30m grid (central part only - without buffer)
                 if actual_h > 0 and actual_w > 0:
-                    dem_30m_data[start_y_30m:end_y_30m, start_x_30m:end_x_30m] = \
-                        prediction[:actual_h, :actual_w]
+                    # Take the slice without buffer from the prediction
+                    prediction_slice = prediction[pred_y_start:pred_y_end, pred_x_start:pred_x_end]
+                    # Handle cases where the prediction slice is smaller than expected
+                    if prediction_slice.shape[0] < actual_h or prediction_slice.shape[1] < actual_w:
+                        actual_h = min(actual_h, prediction_slice.shape[0])
+                        actual_w = min(actual_w, prediction_slice.shape[1])
+                    
+                    dem_30m_data[start_y_30m:start_y_30m+actual_h, start_x_30m:start_x_30m+actual_w] = \
+                        prediction_slice[:actual_h, :actual_w]
             
             processed_chunks += current_batch_size
     
@@ -223,12 +252,13 @@ if __name__ == "__main__":
     
     print(f"Using batch size: {batch_size}")
     
-    # Use the chunk-based inference
+    # Use the chunk-based inference with buffer for edge effect reduction
     dem_30m_cnn = chunk_based_inference(
         model, 
         dem_90m, 
         batch_size=batch_size,
-        chunk_size=128
+        chunk_size=128,
+        buffer_size=8  # 8-pixel buffer on each side to reduce edge effects
     )
     
     print(f"Super-resolution prediction shape: {dem_30m_cnn.shape}")

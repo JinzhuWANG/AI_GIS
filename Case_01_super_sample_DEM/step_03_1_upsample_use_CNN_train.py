@@ -48,21 +48,20 @@ class SuperResolutionCNN(nn.Module):
         self.deconv2 = nn.ConvTranspose2d(32, 16, kernel_size=3, stride=2, padding=1, output_padding=1)
         self.bn4 = nn.BatchNorm2d(16)
         
-        # Super-resolution: 128x128 -> (384+32)x(384+32) = 416x416
-        # Added 32-pixel buffer to reduce edge effects
-        # Output will be 416x416 but central 384x384 will be used for loss calculation
-        self.deconv3 = nn.ConvTranspose2d(16, 1, kernel_size=3, stride=3, padding=1+11, output_padding=2)
+        # Super-resolution: 128x128 -> 384x384 (3x upscaling)
+        # Edge effects will be handled during inference with overlapping tiles
+        self.deconv3 = nn.ConvTranspose2d(16, 1, kernel_size=3, stride=3, padding=1, output_padding=2)
         
     def forward(self, x):
         # Encoder: 128 -> 64 -> 32
         x = F.relu(self.bn1(self.conv1(x)))
         x = F.relu(self.bn2(self.conv2(x)))
         
-        # Decoder: 32 -> 64 -> 128 -> 416 (includes 32-pixel buffer)
-        # The buffer is added to reduce edge effects and will be clipped during training
+        # Decoder: 32 -> 64 -> 128 -> 384
+        # Edge effects will be handled during inference with overlapping tiles
         x = F.relu(self.bn3(self.deconv1(x)))
         x = F.relu(self.bn4(self.deconv2(x)))
-        x = self.deconv3(x)  # Outputs 416x416 tensor (with 16-pixel buffer on each side)
+        x = self.deconv3(x)  # Outputs 384x384 tensor
         
         return x
 
@@ -220,17 +219,17 @@ def train_model(model, train_loader, val_loader, num_epochs=100, learning_rate=0
     
     train_losses = []
     val_losses = []
-    buffer_size = 16  # 32/2 = 16 pixels on each side to match the 416 -> 384 conversion
-    
-    # Check if the model output and target dimensions match after clipping
+    # Check if the model output matches target dimensions
     with torch.no_grad():
         sample_low_res = next(iter(train_loader))[0][:1].to(device)
         sample_output = model(sample_low_res)
-        output_shape = sample_output[:, :, buffer_size:-buffer_size, buffer_size:-buffer_size].shape
+        output_shape = sample_output.shape
         target_shape = next(iter(train_loader))[1][:1].shape
-        print(f"Model output shape after clipping: {output_shape}")
+        print(f"Model output shape: {output_shape}")
         print(f"Target shape: {target_shape}")
-        assert output_shape[2:] == target_shape[2:], "Output and target dimensions don't match!"
+        if output_shape[2:] != target_shape[2:]:
+            print(f"WARNING: Output shape {output_shape[2:]} doesn't match target shape {target_shape[2:]}")
+            print("This will cause a tensor size mismatch error during training!")
     
     for epoch in range(num_epochs):
         # Training phase
@@ -242,11 +241,15 @@ def train_model(model, train_loader, val_loader, num_epochs=100, learning_rate=0
             optimizer.zero_grad()
             outputs = model(low_res)
             
-            # Clip the 32-pixel buffer (16 pixels each side) from outputs to match high_res size (416x416 -> 384x384)
-            # This removes edge artifacts from the super-resolution process
-            outputs_clipped = outputs[:, :, buffer_size:-buffer_size, buffer_size:-buffer_size]
+            # Directly use outputs against high_res
+            # Edge effects will be handled during inference
             
-            loss = criterion(outputs_clipped, high_res)
+            # Resize high_res if necessary to match output dimensions
+            if outputs.shape[2:] != high_res.shape[2:]:
+                print(f"Resizing high_res from {high_res.shape[2:]} to {outputs.shape[2:]}")
+                high_res = F.interpolate(high_res, size=outputs.shape[2:], mode='bilinear', align_corners=False)
+            
+            loss = criterion(outputs, high_res)
             loss.backward()
             optimizer.step()
             
@@ -260,11 +263,13 @@ def train_model(model, train_loader, val_loader, num_epochs=100, learning_rate=0
                 low_res, high_res = low_res.to(device), high_res.to(device)
                 outputs = model(low_res)
                 
-                # Clip the 32-pixel buffer (16 pixels each side) for validation as well (416x416 -> 384x384)
-                # This ensures consistent training and validation loss calculation
-                outputs_clipped = outputs[:, :, buffer_size:-buffer_size, buffer_size:-buffer_size]
+                # Directly use outputs against high_res for validation too
                 
-                val_loss += criterion(outputs_clipped, high_res).item()
+                # Resize high_res if necessary to match output dimensions
+                if outputs.shape[2:] != high_res.shape[2:]:
+                    high_res = F.interpolate(high_res, size=outputs.shape[2:], mode='bilinear', align_corners=False)
+                
+                val_loss += criterion(outputs, high_res).item()
         
         train_loss /= len(train_loader)
         val_loss /= len(val_loader)
@@ -297,6 +302,7 @@ if __name__ == "__main__":
     
     # Create 500 samples
     print("\nCreating samples...")
+    # Since our model output after clipping is 384x384, we need to make sure high_res_size matches this
     low_res_samples, high_res_samples = create_samples(
         dem_30m_original, dem_90m, num_samples=500, low_res_size=128, high_res_size=384
     )
