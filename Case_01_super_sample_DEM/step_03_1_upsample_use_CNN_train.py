@@ -48,8 +48,9 @@ class SuperResolutionCNN(nn.Module):
         self.deconv2 = nn.ConvTranspose2d(32, 16, kernel_size=3, stride=2, padding=1, output_padding=1)
         self.bn4 = nn.BatchNorm2d(16)
         
-        # Super-resolution: 128x128 -> 384x384
-        self.deconv3 = nn.ConvTranspose2d(16, 1, kernel_size=3, stride=3, padding=1, output_padding=2)
+        # Super-resolution: 128x128 -> (384+32)x(384+32) = 416x416
+        # Added 32-pixel buffer to reduce edge effects
+        self.deconv3 = nn.ConvTranspose2d(16, 1, kernel_size=3, stride=3, padding=1+11, output_padding=2)
         
     def forward(self, x):
         # Encoder: 128 -> 64 -> 32
@@ -63,7 +64,7 @@ class SuperResolutionCNN(nn.Module):
         
         return x
 
-def create_samples(dem_30m, dem_90m, num_samples=500, low_res_size=128, high_res_size=384):
+def create_samples(dem_30m, dem_90m, num_samples=500, low_res_size=128, high_res_size=416):
     """
     Create training samples from DEM data
     low_res_size: size of input samples (128x128)
@@ -274,7 +275,7 @@ if __name__ == "__main__":
     # Create 500 samples
     print("\nCreating samples...")
     low_res_samples, high_res_samples = create_samples(
-        dem_30m_original, dem_90m, num_samples=500, low_res_size=128, high_res_size=384
+        dem_30m_original, dem_90m, num_samples=500, low_res_size=128, high_res_size=416
     )
     
     print(f"Created samples - Low res shape: {low_res_samples.shape}")
