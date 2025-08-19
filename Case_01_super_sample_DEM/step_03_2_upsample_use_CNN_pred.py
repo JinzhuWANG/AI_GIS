@@ -235,7 +235,7 @@ if __name__ == "__main__":
         print(f"GPU Memory: {torch.cuda.get_device_properties(0).total_memory / 1024**3:.1f} GB")
     
     # Load the traced model
-    model = torch.jit.load('data/CNN_super_resolution_traced.pt', map_location=device)
+    model = torch.jit.load('data/CNN_super_resolution_traced_epoch_3360.pt', map_location=device)
     print("TorchScript traced model loaded successfully!")
     
     model.eval()

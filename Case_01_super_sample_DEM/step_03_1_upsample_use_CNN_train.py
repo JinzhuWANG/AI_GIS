@@ -17,7 +17,7 @@ from helper import SuperResolutionCNN_deep, UNet, SRCNN_3x, EnhancedSRCNN_3x, ed
 
 # Initialize the model
 model = EnhancedSRCNN_3x()
-NUM_EPOCH = 500
+NUM_EPOCH = 10000
 
 # Set random seeds for reproducibility
 torch.manual_seed(42)
