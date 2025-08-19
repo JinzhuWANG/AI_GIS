@@ -1,0 +1,11 @@
+# Ignore all data files
+Case_01_super_sample_DEM/data/
+Case_02_fill_temporal_gap.py/data/
+
+installer/
+
+# Ignore Python cache and environment files
+__pycache__/
+
+# Ignore VS Code settings
+.vscode/
