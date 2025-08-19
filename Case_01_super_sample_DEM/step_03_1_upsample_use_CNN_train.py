@@ -218,6 +218,7 @@ def train_model(model, train_loader, val_loader, num_epochs=100, learning_rate=0
     
     train_losses = []
     val_losses = []
+    buffer_size = 16  # 32/2 = 16 pixels on each side
     
     for epoch in range(num_epochs):
         # Training phase
@@ -228,7 +229,11 @@ def train_model(model, train_loader, val_loader, num_epochs=100, learning_rate=0
             
             optimizer.zero_grad()
             outputs = model(low_res)
-            loss = criterion(outputs, high_res)
+            
+            # Clip the 32-pixel buffer from outputs to match high_res size
+            outputs_clipped = outputs[:, :, buffer_size:-buffer_size, buffer_size:-buffer_size]
+            
+            loss = criterion(outputs_clipped, high_res)
             loss.backward()
             optimizer.step()
             
@@ -241,7 +246,11 @@ def train_model(model, train_loader, val_loader, num_epochs=100, learning_rate=0
             for low_res, high_res in val_loader:
                 low_res, high_res = low_res.to(device), high_res.to(device)
                 outputs = model(low_res)
-                val_loss += criterion(outputs, high_res).item()
+                
+                # Clip the 32-pixel buffer for validation as well
+                outputs_clipped = outputs[:, :, buffer_size:-buffer_size, buffer_size:-buffer_size]
+                
+                val_loss += criterion(outputs_clipped, high_res).item()
         
         train_loss /= len(train_loader)
         val_loss /= len(val_loader)
