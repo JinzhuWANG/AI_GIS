@@ -15,6 +15,7 @@ from helper import SuperResolutionCNN_deep, UNet, SRCNN_3x, EnhancedSRCNN_3x, ed
 
 # Initialize the model
 model = EnhancedSRCNN_3x()
+NUM_EPOCH = 500
 
 # Set random seeds for reproducibility
 torch.manual_seed(42)
@@ -215,10 +216,9 @@ def train_model(model, train_loader, val_loader, num_epochs=100, learning_rate=0
                 print(f"Resizing high_res from {high_res.shape[2:]} to {outputs.shape[2:]}")
                 high_res = F.interpolate(high_res, size=outputs.shape[2:], mode='bilinear', align_corners=False)
             
-            # total_loss = F.mse_loss(outputs, high_res)
-            total_loss = F.l1_loss(outputs, high_res)
-            total_loss = total_loss + edge_preserving_loss(outputs, high_res) * 0.5
-            total_loss = total_loss + gradient_loss(outputs, high_res) ** 2
+            total_loss = F.mse_loss(outputs, high_res)
+            total_loss = total_loss + edge_preserving_loss(outputs, high_res) * 0.1
+            total_loss = total_loss + gradient_loss(outputs, high_res) * 0.5
             total_loss.backward()
             optimizer.step()
             
@@ -254,6 +254,15 @@ def train_model(model, train_loader, val_loader, num_epochs=100, learning_rate=0
                 memory_allocated = torch.cuda.memory_allocated(0) / 1024**3
                 memory_reserved = torch.cuda.memory_reserved(0) / 1024**3
                 print(f'GPU Memory - Allocated: {memory_allocated:.2f} GB, Reserved: {memory_reserved:.2f} GB')
+
+            # Save TorchScript traced model every 10 epochs
+            model.eval()
+            sample_input = torch.randn(1, 1, 128, 128).to(device)
+            traced_model = torch.jit.trace(model, sample_input)
+            traced_model_path = f'data/CNN_super_resolution_traced_epoch_{epoch+1:03d}.pt'
+            traced_model.save(traced_model_path)
+            model.train()  # Switch back to training mode
+            print(f'Traced model saved as {traced_model_path}')
     
     return train_losses, val_losses
 
@@ -310,18 +319,14 @@ if __name__ == "__main__":
     print(f"Model moved to: {device}")
     
     print("\nStarting training...")
-    train_losses, val_losses = train_model(model, train_loader, val_loader, num_epochs=100)
+    train_losses, val_losses = train_model(model, train_loader, val_loader, num_epochs=NUM_EPOCH)
     
-    # Save the complete trained model (traditional way)
-    torch.save(model, 'data/CNN_super_resolution.pth')
-    print("\nComplete model saved as 'data/CNN_super_resolution.pth'")
-    
-    # Also save as TorchScript traced model (no class definition needed for loading)
+    # Save only the final TorchScript traced model
     model.eval()
     sample_input = torch.randn(1, 1, 128, 128).to(device)
     traced_model = torch.jit.trace(model, sample_input)
-    traced_model.save('data/CNN_super_resolution_traced.pt')
-    print("TorchScript traced model saved as 'data/CNN_super_resolution_traced.pt'")
+    traced_model.save('data/CNN_super_resolution_traced_final.pt')
+    print("\nFinal TorchScript traced model saved as 'data/CNN_super_resolution_traced_final.pt'")
     
 
     # Plot training curves

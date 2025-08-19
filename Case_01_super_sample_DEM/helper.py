@@ -241,6 +241,14 @@ class EnhancedSRCNN_3x(nn.Module):
             self._make_residual_block(128, 64),
         ])
         
+        # Channel adapters for residual connections
+        self.channel_adapters = nn.ModuleList([
+            nn.Identity(),  # 256 -> 256
+            nn.Identity(),  # 256 -> 256  
+            nn.Conv2d(256, 128, 1),  # 256 -> 128
+            nn.Conv2d(128, 64, 1),   # 128 -> 64
+        ])
+        
         # Upsampling layers - progressive 3x upsampling
         self.upsample_conv = nn.Conv2d(64, 64 * 9, kernel_size=3, padding=1)
         self.pixel_shuffle = nn.PixelShuffle(3)  # 3x upsampling
@@ -297,14 +305,11 @@ class EnhancedSRCNN_3x(nn.Module):
             x = block(x)
         
         # Non-linear mapping with residuals
-        for block in self.mapping_blocks:
+        for i, block in enumerate(self.mapping_blocks):
             identity = x
             out = block(x)
-            # Handle channel dimension changes
-            if out.shape[1] != identity.shape[1]:
-                identity = F.adaptive_avg_pool2d(identity, 1)
-                identity = F.interpolate(identity, size=out.shape[2:])
-                identity = torch.cat([identity] * (out.shape[1] // identity.shape[1]), dim=1)
+            # Apply channel adapter for residual connection
+            identity = self.channel_adapters[i](identity)
             x = F.relu(out + identity)
         
         # Upsampling
