@@ -1,3 +1,5 @@
+import csv
+import os
 import xarray as xr
 import numpy as np
 import random
@@ -189,6 +191,14 @@ def train_model(model, train_loader, val_loader, num_epochs=100, learning_rate=0
     
     train_losses = []
     val_losses = []
+    
+    # Write header if file does not exist
+    metrics_csv_path = 'data/performance_metrics.csv'
+    if not os.path.exists(metrics_csv_path):
+        with open(metrics_csv_path, 'w', newline='') as f:
+            writer = csv.writer(f)
+            writer.writerow(['epoch', 'train_loss', 'val_loss'])
+            
     # Check if the model output matches target dimensions
     with torch.no_grad():
         sample_low_res = next(iter(train_loader))[0][:1].to(device)
@@ -246,9 +256,13 @@ def train_model(model, train_loader, val_loader, num_epochs=100, learning_rate=0
         train_losses.append(train_loss)
         val_losses.append(val_loss)
         
+        # Write metrics to CSV for each epoch
+        with open(metrics_csv_path, 'a', newline='') as f:
+            writer = csv.writer(f)
+            writer.writerow([epoch + 1, train_loss, val_loss])
+
         if (epoch + 1) % 10 == 0:
             print(f'Epoch [{epoch+1}/{num_epochs}], Train Loss: {train_loss:.6f}, Val Loss: {val_loss:.6f}')
-            
             # Print GPU memory usage if using CUDA
             if device.type == "cuda":
                 memory_allocated = torch.cuda.memory_allocated(0) / 1024**3
@@ -263,7 +277,6 @@ def train_model(model, train_loader, val_loader, num_epochs=100, learning_rate=0
             traced_model.save(traced_model_path)
             model.train()  # Switch back to training mode
             print(f'Traced model saved as {traced_model_path}')
-    
     return train_losses, val_losses
 
 
