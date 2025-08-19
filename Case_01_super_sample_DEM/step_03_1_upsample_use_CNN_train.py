@@ -11,6 +11,10 @@ import torch.nn.functional as F
 from torch.utils.data import Dataset, DataLoader
 from sklearn.model_selection import train_test_split
 
+from helper import SuperResolutionCNN_deep, UNet, SRCNN_3x, EnhancedSRCNN_3x, edge_preserving_loss, gradient_loss
+
+# Initialize the model
+model = EnhancedSRCNN_3x()
 
 # Set random seeds for reproducibility
 torch.manual_seed(42)
@@ -28,42 +32,7 @@ class DEMDataset(Dataset):
     def __getitem__(self, idx):
         return self.low_res_samples[idx], self.high_res_samples[idx]
 
-class SuperResolutionCNN(nn.Module):
-    def __init__(self):
-        super(SuperResolutionCNN, self).__init__()
-        
-        # Encoder: 128x128 -> 64x64
-        self.conv1 = nn.Conv2d(1, 32, kernel_size=3, stride=2, padding=1)
-        self.bn1 = nn.BatchNorm2d(32)
-        
-        # Further encode: 64x64 -> 32x32
-        self.conv2 = nn.Conv2d(32, 64, kernel_size=3, stride=2, padding=1)
-        self.bn2 = nn.BatchNorm2d(64)
-        
-        # Start decoding: 32x32 -> 64x64
-        self.deconv1 = nn.ConvTranspose2d(64, 32, kernel_size=3, stride=2, padding=1, output_padding=1)
-        self.bn3 = nn.BatchNorm2d(32)
-        
-        # Decode: 64x64 -> 128x128
-        self.deconv2 = nn.ConvTranspose2d(32, 16, kernel_size=3, stride=2, padding=1, output_padding=1)
-        self.bn4 = nn.BatchNorm2d(16)
-        
-        # Super-resolution: 128x128 -> 384x384 (3x upscaling)
-        # Edge effects will be handled during inference with overlapping tiles
-        self.deconv3 = nn.ConvTranspose2d(16, 1, kernel_size=3, stride=3, padding=1, output_padding=2)
-        
-    def forward(self, x):
-        # Encoder: 128 -> 64 -> 32
-        x = F.relu(self.bn1(self.conv1(x)))
-        x = F.relu(self.bn2(self.conv2(x)))
-        
-        # Decoder: 32 -> 64 -> 128 -> 384
-        # Edge effects will be handled during inference with overlapping tiles
-        x = F.relu(self.bn3(self.deconv1(x)))
-        x = F.relu(self.bn4(self.deconv2(x)))
-        x = self.deconv3(x)  # Outputs 384x384 tensor
-        
-        return x
+
 
 def create_samples(dem_30m, dem_90m, num_samples=500, low_res_size=128, high_res_size=384):
     """
@@ -241,19 +210,19 @@ def train_model(model, train_loader, val_loader, num_epochs=100, learning_rate=0
             optimizer.zero_grad()
             outputs = model(low_res)
             
-            # Directly use outputs against high_res
-            # Edge effects will be handled during inference
-            
             # Resize high_res if necessary to match output dimensions
             if outputs.shape[2:] != high_res.shape[2:]:
                 print(f"Resizing high_res from {high_res.shape[2:]} to {outputs.shape[2:]}")
                 high_res = F.interpolate(high_res, size=outputs.shape[2:], mode='bilinear', align_corners=False)
             
-            loss = criterion(outputs, high_res)
-            loss.backward()
+            # total_loss = F.mse_loss(outputs, high_res)
+            total_loss = F.l1_loss(outputs, high_res)
+            total_loss = total_loss + edge_preserving_loss(outputs, high_res) * 0.5
+            total_loss = total_loss + gradient_loss(outputs, high_res) ** 2
+            total_loss.backward()
             optimizer.step()
             
-            train_loss += loss.item()
+            train_loss += total_loss.item()
         
         # Validation phase
         model.eval()
@@ -304,7 +273,7 @@ if __name__ == "__main__":
     print("\nCreating samples...")
     # Since our model output after clipping is 384x384, we need to make sure high_res_size matches this
     low_res_samples, high_res_samples = create_samples(
-        dem_30m_original, dem_90m, num_samples=500, low_res_size=128, high_res_size=384
+        dem_30m_original, dem_90m, num_samples=1500, low_res_size=128, high_res_size=384
     )
     
     print(f"Created samples - Low res shape: {low_res_samples.shape}")
@@ -335,7 +304,7 @@ if __name__ == "__main__":
         print(f"GPU: {torch.cuda.get_device_name(0)}")
         print(f"GPU Memory: {torch.cuda.get_device_properties(0).total_memory / 1024**3:.1f} GB")
     
-    model = SuperResolutionCNN()
+    
     model = model.to(device)
     print(f"Model parameters: {sum(p.numel() for p in model.parameters())}")
     print(f"Model moved to: {device}")
