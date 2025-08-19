@@ -121,8 +121,12 @@ def chunk_based_inference(model, dem_90m, batch_size=8, chunk_size=128):
             # Move to device - chunks already have channel dimension
             chunk_batch = chunk_batch.to(device)  # [batch, 1, 128, 128]
             
-            # Perform batch inference (128x128 -> 384x384)
-            predictions = model(chunk_batch)  # [batch, 1, 384, 384]
+            # Perform batch inference (128x128 -> 416x416)
+            predictions = model(chunk_batch)  # [batch, 1, 416, 416]
+            
+            # Clip the 32-pixel buffer to get the original 384x384 output
+            buffer_size = 16  # 32 / 2 = 16 pixels on each side
+            predictions = predictions[:, :, buffer_size:-buffer_size, buffer_size:-buffer_size]  # [batch, 1, 384, 384]
             predictions = predictions.cpu().numpy().squeeze()  # Remove channel dimension
             
             # Handle single item batch
