@@ -8,15 +8,18 @@ import matplotlib.pyplot as plt
 import torch
 import torch.nn as nn
 import torch.optim as optim
-import torch.nn.functional as F
 
+from tqdm.auto import tqdm
 from torch.utils.data import Dataset, DataLoader
-from sklearn.model_selection import train_test_split
-
-from helper import EnhancedSRCNN_4x, edge_preserving_loss, gradient_loss
+from helper import( 
+    SuperResolutionCNN_shallow,
+    EnhancedSRCNN_4x, 
+    edge_preserving_loss, 
+    gradient_loss
+)
 
 # Initialize the model (now adapted for RGB images with 64-32-64-128-256 architecture)
-model = EnhancedSRCNN_4x()
+model = SuperResolutionCNN_shallow()
 NUM_EPOCH = 1000
 
 # Set random seeds for reproducibility
@@ -97,10 +100,14 @@ def train_model(model, train_loader, val_loader, num_epochs=100, learning_rate=0
     early_stop_patience = 50
     
     for epoch in range(num_epochs):
-        # Training phase
+        print(f"\nEpoch [{epoch+1}/{num_epochs}]")
+        
+        # Training phase with progress bar for batches
         model.train()
         train_loss = 0.0
-        for batch_idx, (low_res, high_res) in enumerate(train_loader):
+        train_pbar = tqdm(train_loader, desc='Training', unit='batch', leave=False)
+        
+        for batch_idx, (low_res, high_res) in enumerate(train_pbar):
             low_res, high_res = low_res.to(device), high_res.to(device)
             
             optimizer.zero_grad()
@@ -117,15 +124,36 @@ def train_model(model, train_loader, val_loader, num_epochs=100, learning_rate=0
             optimizer.step()
             
             train_loss += total_loss.item()
+            
+            # Update training progress bar
+            current_train_loss = train_loss / (batch_idx + 1)
+            train_pbar.set_postfix({
+                'Loss': f'{total_loss.item():.6f}',
+                'Avg Loss': f'{current_train_loss:.6f}'
+            })
         
-        # Validation phase
+        train_pbar.close()
+        
+        # Validation phase with progress bar
         model.eval()
         val_loss = 0.0
+        val_pbar = tqdm(val_loader, desc='Validation', unit='batch', leave=False)
+        
         with torch.no_grad():
-            for low_res, high_res in val_loader:
+            for batch_idx, (low_res, high_res) in enumerate(val_pbar):
                 low_res, high_res = low_res.to(device), high_res.to(device)
                 outputs = model(low_res)
-                val_loss += criterion(outputs, high_res).item()
+                batch_val_loss = criterion(outputs, high_res).item()
+                val_loss += batch_val_loss
+                
+                # Update validation progress bar
+                current_val_loss = val_loss / (batch_idx + 1)
+                val_pbar.set_postfix({
+                    'Loss': f'{batch_val_loss:.6f}',
+                    'Avg Loss': f'{current_val_loss:.6f}'
+                })
+        
+        val_pbar.close()
         
         train_loss /= len(train_loader)
         val_loss /= len(val_loader)
@@ -148,23 +176,19 @@ def train_model(model, train_loader, val_loader, num_epochs=100, learning_rate=0
             patience_counter = 0
             # Save best model
             torch.save(model.state_dict(), 'data/best_model.pth')
+            print(f"✓ New best model saved! Val Loss: {val_loss:.6f}")
         else:
             patience_counter += 1
+        
+        # Print epoch summary
+        print(f"Train Loss: {train_loss:.6f} | Val Loss: {val_loss:.6f} | Best Val: {best_val_loss:.6f} | LR: {current_lr:.8f} | Patience: {patience_counter}/{early_stop_patience}")
         
         if patience_counter >= early_stop_patience:
             print(f'Early stopping at epoch {epoch+1}')
             break
 
-        if (epoch + 1) % 10 == 0:
-            print(f'Epoch [{epoch+1}/{num_epochs}], Train Loss: {train_loss:.6f}, Val Loss: {val_loss:.6f}, LR: {current_lr:.8f}')
-            
-            # Print GPU memory usage if using CUDA
-            if device.type == "cuda":
-                memory_allocated = torch.cuda.memory_allocated(0) / 1024**3
-                memory_reserved = torch.cuda.memory_reserved(0) / 1024**3
-                print(f'GPU Memory - Allocated: {memory_allocated:.2f} GB, Reserved: {memory_reserved:.2f} GB')
-
-            # Save TorchScript traced model periodically
+        # Save TorchScript traced model periodically (every 50 epochs)
+        if (epoch + 1) % 50 == 0:
             model.eval()
             sample_input = torch.randn(1, 3, 64, 64).to(device)  # RGB input
             traced_model = torch.jit.trace(model, sample_input)
@@ -172,6 +196,12 @@ def train_model(model, train_loader, val_loader, num_epochs=100, learning_rate=0
             traced_model.save(traced_model_path)
             model.train()
             print(f'Traced model saved as {traced_model_path}')
+            
+            # Print GPU memory usage if using CUDA
+            if device.type == "cuda":
+                memory_allocated = torch.cuda.memory_allocated(0) / 1024**3
+                memory_reserved = torch.cuda.memory_reserved(0) / 1024**3
+                print(f'GPU Memory - Allocated: {memory_allocated:.2f} GB, Reserved: {memory_reserved:.2f} GB')
     
     return train_losses, val_losses
 

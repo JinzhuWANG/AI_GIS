@@ -4,39 +4,32 @@ import torch.nn.functional as F
 
 class SuperResolutionCNN_shallow(nn.Module):
     """
-    Shallow CNN for RGB image super-resolution: 64x64 -> 256x256 (4x upsampling)
-    Architecture: 64-32-64-128-256 feature channels
+    Simplified Shallow CNN for RGB image super-resolution: 64x64 -> 256x256 (4x upsampling)
+    Removed identity convolution layers to reduce parameters
+    Direct path: Input -> Downsample -> Upsample stages -> Output
     Input: 3 channels (RGB), Output: 3 channels (RGB)
     """
     def __init__(self, num_channels=3):
         super(SuperResolutionCNN_shallow, self).__init__()
         
-        # Initial feature extraction: 64x64 -> 64x64 (64 features)
-        self.conv1 = nn.Conv2d(num_channels, 64, kernel_size=3, padding=1)
-        self.bn1 = nn.BatchNorm2d(64)
+        # Direct downsampling: 64x64 -> 32x32 (32 features)
+        self.downsample = nn.Conv2d(num_channels, 32, kernel_size=3, stride=2, padding=1)
+        self.bn_down = nn.BatchNorm2d(32)
         
-        # Downsampling: 64x64 -> 32x32 (32 features)
-        self.conv2 = nn.Conv2d(64, 32, kernel_size=3, stride=2, padding=1)
-        self.bn2 = nn.BatchNorm2d(32)
+        # First upsampling: 32x32 -> 64x64 (64 features)
+        self.upsample1 = nn.ConvTranspose2d(32, 64, kernel_size=3, stride=2, padding=1, output_padding=1)
+        self.bn_up1 = nn.BatchNorm2d(64)
         
-        # Feature enhancement at bottleneck: 32x32 -> 32x32 (64 features)
-        self.conv3 = nn.Conv2d(32, 64, kernel_size=3, padding=1)
-        self.bn3 = nn.BatchNorm2d(64)
+        # Second upsampling: 64x64 -> 128x128 (128 features)
+        self.upsample2 = nn.ConvTranspose2d(64, 128, kernel_size=3, stride=2, padding=1, output_padding=1)
+        self.bn_up2 = nn.BatchNorm2d(128)
         
-        # Start upsampling: 32x32 -> 64x64 (128 features)
-        self.deconv1 = nn.ConvTranspose2d(64, 128, kernel_size=3, stride=2, padding=1, output_padding=1)
-        self.bn4 = nn.BatchNorm2d(128)
+        # Final upsampling: 128x128 -> 256x256 (64 features, then reduce to output)
+        self.upsample3 = nn.ConvTranspose2d(128, 64, kernel_size=3, stride=2, padding=1, output_padding=1)
+        self.bn_up3 = nn.BatchNorm2d(64)
         
-        # Continue upsampling: 64x64 -> 128x128 (128 features)
-        self.deconv2 = nn.ConvTranspose2d(128, 128, kernel_size=3, stride=2, padding=1, output_padding=1)
-        self.bn5 = nn.BatchNorm2d(128)
-        
-        # Final upsampling: 128x128 -> 256x256 (256 features)
-        self.deconv3 = nn.ConvTranspose2d(128, 256, kernel_size=3, stride=2, padding=1, output_padding=1)
-        self.bn6 = nn.BatchNorm2d(256)
-        
-        # Final reconstruction
-        self.final_conv = nn.Conv2d(256, num_channels, kernel_size=3, padding=1)
+        # Final output layer
+        self.final_conv = nn.Conv2d(64, num_channels, kernel_size=3, padding=1)
         
         # Skip connection
         self.skip_upsample = nn.Upsample(scale_factor=4, mode='bilinear', align_corners=False)
@@ -45,16 +38,22 @@ class SuperResolutionCNN_shallow(nn.Module):
         # Store input for skip connection
         skip = self.skip_upsample(x)
         
-        # Encoder: 64x64 -> 64x64 -> 32x32 -> 32x32 (64-32-64 features)
-        x = F.relu(self.bn1(self.conv1(x)))        # 64 features
-        x = F.relu(self.bn2(self.conv2(x)))        # 32 features at 32x32
-        x = F.relu(self.bn3(self.conv3(x)))        # 64 features at 32x32
+        # Simplified encoder-decoder path
+        # Downsample: 64x64 -> 32x32 (32 features)
+        x = F.relu(self.bn_down(self.downsample(x)))
         
-        # Decoder: 32x32 -> 64x64 -> 128x128 -> 256x256 (128-128-256 features)
-        x = F.relu(self.bn4(self.deconv1(x)))      # 128 features at 64x64
-        x = F.relu(self.bn5(self.deconv2(x)))      # 128 features at 128x128
-        x = F.relu(self.bn6(self.deconv3(x)))      # 256 features at 256x256
-        x = torch.sigmoid(self.final_conv(x))      # 3 channels at 256x256
+        # Progressive upsampling with feature expansion
+        # 32x32 -> 64x64 (64 features)
+        x = F.relu(self.bn_up1(self.upsample1(x)))
+        
+        # 64x64 -> 128x128 (128 features) 
+        x = F.relu(self.bn_up2(self.upsample2(x)))
+        
+        # 128x128 -> 256x256 (64 features)
+        x = F.relu(self.bn_up3(self.upsample3(x)))
+        
+        # Final output: 256x256 (3 channels)
+        x = torch.sigmoid(self.final_conv(x))
         
         # Add skip connection
         return x + skip
