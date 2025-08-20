@@ -3,120 +3,190 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 class SuperResolutionCNN_shallow(nn.Module):
-    def __init__(self):
+    """
+    Shallow CNN for RGB image super-resolution: 64x64 -> 256x256 (4x upsampling)
+    Architecture: 64-32-64-128-256 feature channels
+    Input: 3 channels (RGB), Output: 3 channels (RGB)
+    """
+    def __init__(self, num_channels=3):
         super(SuperResolutionCNN_shallow, self).__init__()
         
-        # Encoder: 128x128 -> 64x64
-        self.conv1 = nn.Conv2d(1, 32, kernel_size=3, stride=2, padding=1)
-        self.bn1 = nn.BatchNorm2d(32)
+        # Initial feature extraction: 64x64 -> 64x64 (64 features)
+        self.conv1 = nn.Conv2d(num_channels, 64, kernel_size=3, padding=1)
+        self.bn1 = nn.BatchNorm2d(64)
         
-        # Further encode: 64x64 -> 32x32
-        self.conv2 = nn.Conv2d(32, 64, kernel_size=3, stride=2, padding=1)
-        self.bn2 = nn.BatchNorm2d(64)
+        # Downsampling: 64x64 -> 32x32 (32 features)
+        self.conv2 = nn.Conv2d(64, 32, kernel_size=3, stride=2, padding=1)
+        self.bn2 = nn.BatchNorm2d(32)
         
-        # Start decoding: 32x32 -> 64x64
-        self.deconv1 = nn.ConvTranspose2d(64, 32, kernel_size=3, stride=2, padding=1, output_padding=1)
-        self.bn3 = nn.BatchNorm2d(32)
+        # Feature enhancement at bottleneck: 32x32 -> 32x32 (64 features)
+        self.conv3 = nn.Conv2d(32, 64, kernel_size=3, padding=1)
+        self.bn3 = nn.BatchNorm2d(64)
         
-        # Decode: 64x64 -> 128x128
-        self.deconv2 = nn.ConvTranspose2d(32, 16, kernel_size=3, stride=2, padding=1, output_padding=1)
-        self.bn4 = nn.BatchNorm2d(16)
+        # Start upsampling: 32x32 -> 64x64 (128 features)
+        self.deconv1 = nn.ConvTranspose2d(64, 128, kernel_size=3, stride=2, padding=1, output_padding=1)
+        self.bn4 = nn.BatchNorm2d(128)
         
-        # Super-resolution: 128x128 -> 384x384 (3x upscaling)
-        # Edge effects will be handled during inference with overlapping tiles
-        self.deconv3 = nn.ConvTranspose2d(16, 1, kernel_size=3, stride=3, padding=1, output_padding=2)
+        # Continue upsampling: 64x64 -> 128x128 (128 features)
+        self.deconv2 = nn.ConvTranspose2d(128, 128, kernel_size=3, stride=2, padding=1, output_padding=1)
+        self.bn5 = nn.BatchNorm2d(128)
+        
+        # Final upsampling: 128x128 -> 256x256 (256 features)
+        self.deconv3 = nn.ConvTranspose2d(128, 256, kernel_size=3, stride=2, padding=1, output_padding=1)
+        self.bn6 = nn.BatchNorm2d(256)
+        
+        # Final reconstruction
+        self.final_conv = nn.Conv2d(256, num_channels, kernel_size=3, padding=1)
+        
+        # Skip connection
+        self.skip_upsample = nn.Upsample(scale_factor=4, mode='bilinear', align_corners=False)
         
     def forward(self, x):
-        # Encoder: 128 -> 64 -> 32
-        x = F.relu(self.bn1(self.conv1(x)))
-        x = F.relu(self.bn2(self.conv2(x)))
+        # Store input for skip connection
+        skip = self.skip_upsample(x)
         
-        # Decoder: 32 -> 64 -> 128 -> 384
-        # Edge effects will be handled during inference with overlapping tiles
-        x = F.relu(self.bn3(self.deconv1(x)))
-        x = F.relu(self.bn4(self.deconv2(x)))
-        x = self.deconv3(x)  # Outputs 384x384 tensor
+        # Encoder: 64x64 -> 64x64 -> 32x32 -> 32x32 (64-32-64 features)
+        x = F.relu(self.bn1(self.conv1(x)))        # 64 features
+        x = F.relu(self.bn2(self.conv2(x)))        # 32 features at 32x32
+        x = F.relu(self.bn3(self.conv3(x)))        # 64 features at 32x32
         
-        return x
+        # Decoder: 32x32 -> 64x64 -> 128x128 -> 256x256 (128-128-256 features)
+        x = F.relu(self.bn4(self.deconv1(x)))      # 128 features at 64x64
+        x = F.relu(self.bn5(self.deconv2(x)))      # 128 features at 128x128
+        x = F.relu(self.bn6(self.deconv3(x)))      # 256 features at 256x256
+        x = torch.sigmoid(self.final_conv(x))      # 3 channels at 256x256
+        
+        # Add skip connection
+        return x + skip
     
 
 class SuperResolutionCNN_deep(nn.Module):
-    def __init__(self):
+    """
+    Deep CNN for RGB image super-resolution: 64x64 -> 256x256 (4x upsampling)
+    Architecture: 64-32-64-128-256 feature channels with deeper layers
+    Input: 3 channels (RGB), Output: 3 channels (RGB)
+    """
+    def __init__(self, num_channels=3):
         super(SuperResolutionCNN_deep, self).__init__()
-        # Encoder: 128x128 -> 64x64 -> 32x32 -> 16x16
-        self.conv1 = nn.Conv2d(1, 64, kernel_size=3, stride=2, padding=1)
+        
+        # Encoder following 64-32-64 pattern
+        # Initial: 64x64 -> 64x64 (64 features)
+        self.conv1 = nn.Conv2d(num_channels, 64, kernel_size=3, padding=1)
         self.bn1 = nn.BatchNorm2d(64)
-        self.conv2 = nn.Conv2d(64, 128, kernel_size=3, stride=2, padding=1)
-        self.bn2 = nn.BatchNorm2d(128)
-        self.conv3 = nn.Conv2d(128, 256, kernel_size=3, stride=2, padding=1)
-        self.bn3 = nn.BatchNorm2d(256)
-        self.conv4 = nn.Conv2d(256, 512, kernel_size=3, stride=2, padding=1)
-        self.bn4 = nn.BatchNorm2d(512)
+        
+        # Downsample: 64x64 -> 32x32 (32 features)
+        self.conv2 = nn.Conv2d(64, 32, kernel_size=3, stride=2, padding=1)
+        self.bn2 = nn.BatchNorm2d(32)
+        
+        # Deep feature extraction at bottleneck: 32x32 (64 features)
+        self.conv3 = nn.Conv2d(32, 64, kernel_size=3, padding=1)
+        self.bn3 = nn.BatchNorm2d(64)
+        self.conv4 = nn.Conv2d(64, 64, kernel_size=3, padding=1)
+        self.bn4 = nn.BatchNorm2d(64)
 
-        # Bottleneck
+        # Bottleneck with residual connections
         self.bottleneck = nn.Sequential(
-            nn.Conv2d(512, 512, kernel_size=3, padding=1),
-            nn.BatchNorm2d(512),
+            nn.Conv2d(64, 64, kernel_size=3, padding=1),
+            nn.BatchNorm2d(64),
             nn.ReLU(),
-            nn.Conv2d(512, 512, kernel_size=3, padding=1),
-            nn.BatchNorm2d(512),
+            nn.Conv2d(64, 64, kernel_size=3, padding=1),
+            nn.BatchNorm2d(64),
             nn.ReLU()
         )
 
-        # Decoder: 16x16 -> 32x32 -> 64x64 -> 128x128 -> 384x384
-        self.deconv1 = nn.ConvTranspose2d(512, 256, kernel_size=3, stride=2, padding=1, output_padding=1)
-        self.bn5 = nn.BatchNorm2d(256)
-        self.deconv2 = nn.ConvTranspose2d(256, 128, kernel_size=3, stride=2, padding=1, output_padding=1)
+        # Decoder following 128-128-256 pattern
+        # Upsample: 32x32 -> 64x64 (128 features)
+        self.deconv1 = nn.ConvTranspose2d(64, 128, kernel_size=3, stride=2, padding=1, output_padding=1)
+        self.bn5 = nn.BatchNorm2d(128)
+        
+        # Upsample: 64x64 -> 128x128 (128 features)
+        self.deconv2 = nn.ConvTranspose2d(128, 128, kernel_size=3, stride=2, padding=1, output_padding=1)
         self.bn6 = nn.BatchNorm2d(128)
-        self.deconv3 = nn.ConvTranspose2d(128, 64, kernel_size=3, stride=2, padding=1, output_padding=1)
-        self.bn7 = nn.BatchNorm2d(64)
-        self.deconv4 = nn.ConvTranspose2d(64, 32, kernel_size=3, stride=2, padding=1, output_padding=1)
-        self.bn8 = nn.BatchNorm2d(32)
-        self.deconv5 = nn.ConvTranspose2d(32, 16, kernel_size=3, stride=3, padding=1, output_padding=2)
-        self.bn9 = nn.BatchNorm2d(16)
-        self.final_conv = nn.Conv2d(16, 1, kernel_size=3, padding=1)
+        
+        # Final upsample: 128x128 -> 256x256 (256 features)
+        self.deconv3 = nn.ConvTranspose2d(128, 256, kernel_size=3, stride=2, padding=1, output_padding=1)
+        self.bn7 = nn.BatchNorm2d(256)
+        
+        # Refinement layers
+        self.refine1 = nn.Conv2d(256, 128, kernel_size=3, padding=1)
+        self.bn8 = nn.BatchNorm2d(128)
+        self.refine2 = nn.Conv2d(128, 64, kernel_size=3, padding=1)
+        self.bn9 = nn.BatchNorm2d(64)
+        
+        # Final output
+        self.final_conv = nn.Conv2d(64, num_channels, kernel_size=3, padding=1)
+        
+        # Skip connection
+        self.skip_upsample = nn.Upsample(scale_factor=4, mode='bilinear', align_corners=False)
         
     def forward(self, x):
-        # Encoder
-        x = F.relu(self.bn1(self.conv1(x)))
-        x = F.relu(self.bn2(self.conv2(x)))
-        x = F.relu(self.bn3(self.conv3(x)))
-        x = F.relu(self.bn4(self.conv4(x)))
+        # Store input for skip connection
+        skip = self.skip_upsample(x)
+        
+        # Encoder: 64-32-64 architecture
+        x = F.relu(self.bn1(self.conv1(x)))        # 64 features at 64x64
+        x = F.relu(self.bn2(self.conv2(x)))        # 32 features at 32x32
+        x = F.relu(self.bn3(self.conv3(x)))        # 64 features at 32x32
+        x = F.relu(self.bn4(self.conv4(x)))        # 64 features at 32x32
 
-        # Bottleneck
+        # Bottleneck with residual
+        identity = x
         x = self.bottleneck(x)
+        x = x + identity  # Residual connection
 
-        # Decoder
-        x = F.relu(self.bn5(self.deconv1(x)))
-        x = F.relu(self.bn6(self.deconv2(x)))
-        x = F.relu(self.bn7(self.deconv3(x)))
-        x = F.relu(self.bn8(self.deconv4(x)))
-        x = F.relu(self.bn9(self.deconv5(x)))
-        x = self.final_conv(x)
-        return x
+        # Decoder: 128-128-256 architecture
+        x = F.relu(self.bn5(self.deconv1(x)))      # 128 features at 64x64
+        x = F.relu(self.bn6(self.deconv2(x)))      # 128 features at 128x128
+        x = F.relu(self.bn7(self.deconv3(x)))      # 256 features at 256x256
+        
+        # Refinement
+        x = F.relu(self.bn8(self.refine1(x)))      # 128 features at 256x256
+        x = F.relu(self.bn9(self.refine2(x)))      # 64 features at 256x256
+        x = torch.sigmoid(self.final_conv(x))      # 3 channels at 256x256
+        
+        # Add skip connection
+        return x + skip
     
     
 class UNet(nn.Module):
-    def __init__(self, in_channels=1, out_channels=1, features=[64, 128, 256, 512]):
+    """
+    UNet for RGB image super-resolution: 64x64 -> 256x256 (4x upsampling)
+    Architecture: 64-32-64-128-256 feature channels with skip connections
+    Input: 3 channels (RGB), Output: 3 channels (RGB)
+    """
+    def __init__(self, in_channels=3, out_channels=3, features=[64, 32, 64]):
         super(UNet, self).__init__()
         self.encoder_layers = nn.ModuleList()
         self.pool = nn.MaxPool2d(kernel_size=2, stride=2)
+        
+        # Encoder following 64-32-64 pattern
         prev_channels = in_channels
         for feature in features:
             self.encoder_layers.append(self.double_conv(prev_channels, feature))
             prev_channels = feature
 
-        self.bottleneck = self.double_conv(features[-1], features[-1]*2)
+        # Bottleneck at 32x32 with 64 features
+        self.bottleneck = self.double_conv(features[-1], features[-1])
 
+        # Decoder following 128-128-256 pattern
         self.upconvs = nn.ModuleList()
         self.decoder_layers = nn.ModuleList()
-        rev_features = features[::-1]
-        for feature in rev_features:
-            self.upconvs.append(nn.ConvTranspose2d(features[-1]*2 if feature==rev_features[0] else feature*2, feature, kernel_size=2, stride=2))
-            self.decoder_layers.append(self.double_conv(feature*2, feature))
-
-        self.final_up = nn.ConvTranspose2d(features[0], features[0]//2, kernel_size=3, stride=3, padding=1, output_padding=2)
-        self.final_conv = nn.Conv2d(features[0]//2, out_channels, kernel_size=1)
+        
+        # First upsampling: 32x32 -> 64x64 (128 features)
+        self.upconvs.append(nn.ConvTranspose2d(64, 128, kernel_size=2, stride=2))
+        self.decoder_layers.append(self.double_conv(128 + 32, 128))  # 128 + skip connection from encoder
+        
+        # Second upsampling: 64x64 -> 128x128 (128 features) 
+        self.upconvs.append(nn.ConvTranspose2d(128, 128, kernel_size=2, stride=2))
+        self.decoder_layers.append(self.double_conv(128 + 64, 128))  # 128 + skip connection
+        
+        # Final upsampling: 64x64 -> 256x256 (256 features then reduce to output channels)
+        self.final_up = nn.ConvTranspose2d(128, 256, kernel_size=4, stride=4)
+        self.final_refine = self.double_conv(256, 128)
+        self.final_conv = nn.Conv2d(128, out_channels, kernel_size=1)
+        
+        # Skip connection for residual learning
+        self.skip_upsample = nn.Upsample(scale_factor=4, mode='bilinear', align_corners=False)
 
     def double_conv(self, in_channels, out_channels):
         return nn.Sequential(
@@ -129,63 +199,107 @@ class UNet(nn.Module):
         )
 
     def forward(self, x):
+        # Store input for skip connection
+        skip_input = self.skip_upsample(x)
+        
+        # Encoder with skip connections (64-32-64 features)
         encs = []
         for enc in self.encoder_layers:
             x = enc(x)
             encs.append(x)
-            x = self.pool(x)
+            if len(encs) < len(self.encoder_layers):  # Don't pool after last encoder layer
+                x = self.pool(x)
+        
+        # Bottleneck
         x = self.bottleneck(x)
+        
+        # Decoder with skip connections (128-128-256 features)
         for idx in range(len(self.upconvs)):
             x = self.upconvs[idx](x)
-            skip = encs[-(idx+1)]
+            skip = encs[-(idx+1)]  # Get corresponding encoder features
             if x.shape != skip.shape:
                 x = F.interpolate(x, size=skip.shape[2:])
             x = torch.cat((skip, x), dim=1)
             x = self.decoder_layers[idx](x)
-        x = self.final_up(x)
-        x = self.final_conv(x)
-        return x
-    
-    
-class SRCNN_3x(nn.Module):
-    """
-    SRCNN adapted for direct 3x upsampling without pre-upsampling
-    Takes LR input (e.g., 128x128) and outputs 3x larger (384x384)
-    
-    Architecture optimized for DEM super-resolution with 3x scaling
-    """
-    
-    def __init__(self, num_channels=1):
-        super(SRCNN_3x, self).__init__()
         
-        # Feature extraction - deeper for better 3x upsampling
+        # Final upsampling to 256x256 with 256 features
+        x = self.final_up(x)
+        x = self.final_refine(x)
+        x = torch.sigmoid(self.final_conv(x))
+        
+        # Add skip connection
+        return x + skip_input
+    
+    
+class SRCNN_4x(nn.Module):
+    """
+    SRCNN adapted for RGB image super-resolution: 64x64 -> 256x256 (4x upsampling)
+    Architecture: 64-32-64-128-256 feature channels using pixel shuffle upsampling
+    Input: 3 channels (RGB), Output: 3 channels (RGB)
+    """
+    
+    def __init__(self, num_channels=3):
+        super(SRCNN_4x, self).__init__()
+        
+        # Feature extraction following 64-32-64 pattern
         self.feature_extraction = nn.Sequential(
+            # Initial: 64x64 -> 64x64 (64 features)
             nn.Conv2d(num_channels, 64, kernel_size=9, padding=4),
+            nn.BatchNorm2d(64),
             nn.ReLU(inplace=True),
-            nn.Conv2d(64, 64, kernel_size=5, padding=2),
+            # Reduce to 32 features
+            nn.Conv2d(64, 32, kernel_size=5, padding=2),
+            nn.BatchNorm2d(32),
+            nn.ReLU(inplace=True),
+            # Expand to 64 features
+            nn.Conv2d(32, 64, kernel_size=5, padding=2),
+            nn.BatchNorm2d(64),
             nn.ReLU(inplace=True)
         )
         
-        # Non-linear mapping - multiple layers for complex terrain features
+        # Non-linear mapping - enhance to 128 features
         self.mapping = nn.Sequential(
             nn.Conv2d(64, 128, kernel_size=3, padding=1),
+            nn.BatchNorm2d(128),
             nn.ReLU(inplace=True),
             nn.Conv2d(128, 128, kernel_size=3, padding=1),
+            nn.BatchNorm2d(128),
             nn.ReLU(inplace=True),
-            nn.Conv2d(128, 64, kernel_size=3, padding=1),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(64, 32, kernel_size=1, padding=0),
+            nn.Conv2d(128, 128, kernel_size=3, padding=1),
+            nn.BatchNorm2d(128),
             nn.ReLU(inplace=True)
         )
         
-        # Upsampling branch - generates 3x3 sub-pixels for each input pixel
-        self.upsampling = nn.Sequential(
-            nn.Conv2d(32, 32 * 9, kernel_size=3, padding=1),  # 9 = 3x3 upsampling
-            nn.PixelShuffle(3),  # Rearranges to 3x upsampled output
+        # Upsampling branch - 2x upsampling to 128x128
+        self.upsample_2x = nn.Sequential(
+            nn.Conv2d(128, 128 * 4, kernel_size=3, padding=1),  # 4 = 2x2 upsampling
+            nn.PixelShuffle(2),  # 128x128 with 128 features
+            nn.BatchNorm2d(128),
+            nn.ReLU(inplace=True)
         )
         
-        # Reconstruction - refines the upsampled result
-        self.reconstruction = nn.Conv2d(32, num_channels, kernel_size=3, padding=1)
+        # Another 2x upsampling to 256x256 with 256 features
+        self.upsample_4x = nn.Sequential(
+            nn.Conv2d(128, 256 * 4, kernel_size=3, padding=1),  # 4 = 2x2 upsampling  
+            nn.PixelShuffle(2),  # 256x256 with 256 features
+            nn.BatchNorm2d(256),
+            nn.ReLU(inplace=True)
+        )
+        
+        # Reconstruction - reduce from 256 features to output channels
+        self.reconstruction = nn.Sequential(
+            nn.Conv2d(256, 128, kernel_size=3, padding=1),
+            nn.BatchNorm2d(128),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(128, 64, kernel_size=3, padding=1),
+            nn.BatchNorm2d(64),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(64, num_channels, kernel_size=3, padding=1),
+            nn.Sigmoid()  # RGB output in [0,1] range
+        )
+        
+        # Skip connection
+        self.skip_upsample = nn.Upsample(scale_factor=4, mode='bilinear', align_corners=False)
         
         self._initialize_weights()
     
@@ -195,75 +309,100 @@ class SRCNN_3x(nn.Module):
                 nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
                 if m.bias is not None:
                     nn.init.zeros_(m.bias)
+            elif isinstance(m, nn.BatchNorm2d):
+                nn.init.ones_(m.weight)
+                nn.init.zeros_(m.bias)
     
     def forward(self, x):
-        # Input: e.g., (batch, 1, 128, 128)
+        # Store input for skip connection
+        skip = self.skip_upsample(x)
         
-        # Feature extraction
-        features = self.feature_extraction(x)
+        # Feature extraction (64-32-64 features)
+        features = self.feature_extraction(x)  # 64x64 with 64 features
         
-        # Non-linear mapping
-        mapped = self.mapping(features)
+        # Non-linear mapping (128 features)
+        mapped = self.mapping(features)  # 64x64 with 128 features
         
-        # Upsampling using pixel shuffle
-        upsampled = self.upsampling(mapped)  # Now (batch, 32, 384, 384)
+        # Progressive upsampling (128-256 features)
+        upsampled_2x = self.upsample_2x(mapped)  # 128x128 with 128 features
+        upsampled_4x = self.upsample_4x(upsampled_2x)  # 256x256 with 256 features
         
         # Final reconstruction
-        output = self.reconstruction(upsampled)  # (batch, 1, 384, 384)
+        output = self.reconstruction(upsampled_4x)  # 256x256 with 3 channels
         
-        return output
+        # Add skip connection
+        return output + skip
 
 
-class EnhancedSRCNN_3x(nn.Module):
+class EnhancedSRCNN_4x(nn.Module):
     """
-    Enhanced SRCNN with residual learning for direct 3x upsampling
-    More comparable to your encoder-decoder architecture
+    Enhanced SRCNN for RGB image super-resolution: 64x64 -> 256x256 (4x upsampling)
+    Architecture: 64-32-64-128-256 feature channels as requested
+    Input: 3 channels (RGB), Output: 3 channels (RGB)
     """
     
-    def __init__(self, num_channels=1):
-        super(EnhancedSRCNN_3x, self).__init__()
+    def __init__(self, num_channels=3):
+        super(EnhancedSRCNN_4x, self).__init__()
         
-        # Initial feature extraction
-        self.initial_conv = nn.Conv2d(num_channels, 32, kernel_size=3, padding=1)
-        
-        # Feature extraction blocks
-        self.feature_blocks = nn.ModuleList([
-            self._make_layer(32, 64, 3),
-            self._make_layer(64, 128, 3), 
-            self._make_layer(128, 256, 3),
-        ])
-        
-        # Non-linear mapping with residual blocks
-        self.mapping_blocks = nn.ModuleList([
-            self._make_residual_block(256, 256),
-            self._make_residual_block(256, 256),
-            self._make_residual_block(256, 128),
-            self._make_residual_block(128, 64),
-        ])
-        
-        # Channel adapters for residual connections
-        self.channel_adapters = nn.ModuleList([
-            nn.Identity(),  # 256 -> 256
-            nn.Identity(),  # 256 -> 256  
-            nn.Conv2d(256, 128, 1),  # 256 -> 128
-            nn.Conv2d(128, 64, 1),   # 128 -> 64
-        ])
-        
-        # Upsampling layers - progressive 3x upsampling
-        self.upsample_conv = nn.Conv2d(64, 64 * 9, kernel_size=3, padding=1)
-        self.pixel_shuffle = nn.PixelShuffle(3)  # 3x upsampling
-        
-        # Reconstruction layers
-        self.reconstruction = nn.Sequential(
-            nn.Conv2d(64, 32, kernel_size=3, padding=1),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(32, 16, kernel_size=3, padding=1),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(16, num_channels, kernel_size=3, padding=1)
+        # Initial feature extraction: 64x64 -> 64x64 (64 features)
+        self.initial_conv = nn.Sequential(
+            nn.Conv2d(num_channels, 64, kernel_size=3, padding=1),
+            nn.BatchNorm2d(64),
+            nn.ReLU(inplace=True)
         )
         
-        # Upsampling for skip connection
-        self.skip_upsample = nn.Upsample(scale_factor=3, mode='bicubic', align_corners=False)
+        # Downsampling: 64x64 -> 32x32 (32 features) 
+        self.downsample = nn.Sequential(
+            nn.Conv2d(64, 32, kernel_size=3, stride=2, padding=1),
+            nn.BatchNorm2d(32),
+            nn.ReLU(inplace=True)
+        )
+        
+        # Feature extraction at bottleneck: 32x32 -> 32x32 (64 features)
+        self.feature_extract = nn.Sequential(
+            nn.Conv2d(32, 64, kernel_size=3, padding=1),
+            nn.BatchNorm2d(64),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(64, 64, kernel_size=3, padding=1),
+            nn.BatchNorm2d(64),
+            nn.ReLU(inplace=True)
+        )
+        
+        # Upsampling back to 64x64 (128 features)
+        self.upsample1 = nn.Sequential(
+            nn.ConvTranspose2d(64, 128, kernel_size=3, stride=2, padding=1, output_padding=1),
+            nn.BatchNorm2d(128),
+            nn.ReLU(inplace=True)
+        )
+        
+        # Progressive upsampling to 128x128 (128 features)
+        self.upsample2 = nn.Sequential(
+            nn.ConvTranspose2d(128, 128, kernel_size=3, stride=2, padding=1, output_padding=1),
+            nn.BatchNorm2d(128),
+            nn.ReLU(inplace=True)
+        )
+        
+        # Final upsampling to 256x256 (256 features)
+        self.upsample3 = nn.Sequential(
+            nn.ConvTranspose2d(128, 256, kernel_size=3, stride=2, padding=1, output_padding=1),
+            nn.BatchNorm2d(256),
+            nn.ReLU(inplace=True)
+        )
+        
+        # Final reconstruction layers
+        self.reconstruction = nn.Sequential(
+            nn.Conv2d(256, 128, kernel_size=3, padding=1),
+            nn.BatchNorm2d(128),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(128, 64, kernel_size=3, padding=1),
+            nn.BatchNorm2d(64),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(64, num_channels, kernel_size=3, padding=1),
+            nn.Sigmoid()  # Normalize output to [0,1] for RGB values
+        )
+        
+        # Skip connection upsampling (4x upsampling for residual connection)
+        self.skip_upsample = nn.Upsample(scale_factor=4, mode='bilinear', align_corners=False)
         
         self._initialize_weights()
     
@@ -285,7 +424,7 @@ class EnhancedSRCNN_3x(nn.Module):
     
     def _initialize_weights(self):
         for m in self.modules():
-            if isinstance(m, nn.Conv2d):
+            if isinstance(m, (nn.Conv2d, nn.ConvTranspose2d)):
                 nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
                 if m.bias is not None:
                     nn.init.zeros_(m.bias)
@@ -294,42 +433,39 @@ class EnhancedSRCNN_3x(nn.Module):
                 nn.init.zeros_(m.bias)
     
     def forward(self, x):
-        # Store input for skip connection
+        # Store input for skip connection (4x upsampling)
         input_skip = self.skip_upsample(x)
         
-        # Initial feature extraction
-        x = F.relu(self.initial_conv(x))
+        # Feature extraction: 64x64 with 64 features
+        x = self.initial_conv(x)
         
-        # Progressive feature extraction
-        for block in self.feature_blocks:
-            x = block(x)
+        # Downsample: 64x64 -> 32x32 with 32 features
+        x = self.downsample(x)
         
-        # Non-linear mapping with residuals
-        for i, block in enumerate(self.mapping_blocks):
-            identity = x
-            out = block(x)
-            # Apply channel adapter for residual connection
-            identity = self.channel_adapters[i](identity)
-            x = F.relu(out + identity)
+        # Feature extraction at bottleneck: 32x32 with 64 features
+        x = self.feature_extract(x)
         
-        # Upsampling
-        x = self.upsample_conv(x)
-        x = self.pixel_shuffle(x)  # Now 3x upsampled
+        # Progressive upsampling following 64-32-64-128-256 architecture
+        x = self.upsample1(x)     # 32x32 -> 64x64, 128 features
+        x = self.upsample2(x)     # 64x64 -> 128x128, 128 features  
+        x = self.upsample3(x)     # 128x128 -> 256x256, 256 features
         
-        # Reconstruction
-        x = self.reconstruction(x)
+        # Final reconstruction
+        x = self.reconstruction(x)  # 256x256 -> 256x256, 3 channels
         
-        # Add skip connection (residual from upsampled input)
-        return x + input_skip
+        # Add skip connection (residual learning)
+        x = x + input_skip
+        
+        return x
     
 
 def edge_preserving_loss(pred, target):
     """
-    Compute edge-preserving loss using Sobel operators.
+    Compute edge-preserving loss using Sobel operators for RGB images.
     
     Args:
-        pred: model predictions
-        target: ground truth
+        pred: model predictions (B, C, H, W)
+        target: ground truth (B, C, H, W)
         
     Returns:
         edge_loss: edge-preserving loss
@@ -340,16 +476,32 @@ def edge_preserving_loss(pred, target):
     sobel_y = torch.tensor([[-1, -2, -1], [0, 0, 0], [1, 2, 1]], 
                           dtype=torch.float32).view(1, 1, 3, 3).to(pred.device)
     
-    pred_edge_x = F.conv2d(pred, sobel_x, padding=1)
-    pred_edge_y = F.conv2d(pred, sobel_y, padding=1)
-    target_edge_x = F.conv2d(target, sobel_x, padding=1)
-    target_edge_y = F.conv2d(target, sobel_y, padding=1)
+    # Expand Sobel operators for each channel
+    num_channels = pred.shape[1]
+    sobel_x = sobel_x.repeat(num_channels, 1, 1, 1)
+    sobel_y = sobel_y.repeat(num_channels, 1, 1, 1)
+    
+    # Apply Sobel operators to each channel separately
+    pred_edge_x = F.conv2d(pred, sobel_x, padding=1, groups=num_channels)
+    pred_edge_y = F.conv2d(pred, sobel_y, padding=1, groups=num_channels)
+    target_edge_x = F.conv2d(target, sobel_x, padding=1, groups=num_channels)
+    target_edge_y = F.conv2d(target, sobel_y, padding=1, groups=num_channels)
     
     edge_loss = F.mse_loss(pred_edge_x, target_edge_x) + F.mse_loss(pred_edge_y, target_edge_y)
     return edge_loss
 
 def gradient_loss(pred, target):
-    # Compute gradients in x and y directions
+    """
+    Compute gradient loss for RGB images by comparing spatial gradients.
+    
+    Args:
+        pred: model predictions (B, C, H, W)
+        target: ground truth (B, C, H, W)
+        
+    Returns:
+        grad_loss: gradient loss
+    """
+    # Compute gradients in x and y directions for all channels
     pred_grad_x = pred[:, :, :, 1:] - pred[:, :, :, :-1]
     pred_grad_y = pred[:, :, 1:, :] - pred[:, :, :-1, :]
     target_grad_x = target[:, :, :, 1:] - target[:, :, :, :-1]

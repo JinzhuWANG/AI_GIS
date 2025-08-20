@@ -13,174 +13,56 @@ import torch.nn.functional as F
 from torch.utils.data import Dataset, DataLoader
 from sklearn.model_selection import train_test_split
 
-from helper import SuperResolutionCNN_deep, UNet, SRCNN_3x, EnhancedSRCNN_3x, edge_preserving_loss, gradient_loss
+from helper import EnhancedSRCNN_4x, edge_preserving_loss, gradient_loss
 
-# Initialize the model
-model = EnhancedSRCNN_3x()
-NUM_EPOCH = 10000
+# Initialize the model (now adapted for RGB images with 64-32-64-128-256 architecture)
+model = EnhancedSRCNN_4x()
+NUM_EPOCH = 1000
 
 # Set random seeds for reproducibility
 torch.manual_seed(42)
 np.random.seed(42)
 random.seed(42)
 
-class DEMDataset(Dataset):
-    def __init__(self, low_res_samples, high_res_samples):
-        self.low_res_samples = torch.FloatTensor(low_res_samples)
-        self.high_res_samples = torch.FloatTensor(high_res_samples)
+class RGBImageDataset(Dataset):
+    """Dataset for RGB image super-resolution training"""
+    def __init__(self, low_res_images, high_res_images):
+        self.low_res_images = torch.FloatTensor(low_res_images)
+        self.high_res_images = torch.FloatTensor(high_res_images)
     
     def __len__(self):
-        return len(self.low_res_samples)
+        return len(self.low_res_images)
     
     def __getitem__(self, idx):
-        return self.low_res_samples[idx], self.high_res_samples[idx]
+        return self.low_res_images[idx], self.high_res_images[idx]
 
 
-
-def create_samples(dem_30m, dem_90m, num_samples=500, low_res_size=128, high_res_size=384):
+def prepare_rgb_data(high_res_data, low_res_data):
     """
-    Create training samples from DEM data
-    low_res_size: size of input samples (128x128)
-    high_res_size: size of target samples (384x384)
+    Prepare RGB image data for training
+    Input: high_res_data (N, H, W, C), low_res_data (N, H_low, W_low, C)
+    Output: normalized tensors in (N, C, H, W) format
     """
-    print(f"Creating {num_samples} samples of size {low_res_size}x{low_res_size} -> {high_res_size}x{high_res_size}")
+    print(f"Preparing RGB data...")
+    print(f"High-res shape: {high_res_data.shape}")
+    print(f"Low-res shape: {low_res_data.shape}")
     
-    # Get data dimensions
-    height_30m, width_30m = dem_30m.shape
-    height_90m, width_90m = dem_90m.shape
+    # Convert from (N, H, W, C) to (N, C, H, W) format for PyTorch
+    high_res_torch = np.transpose(high_res_data, (0, 3, 1, 2))
+    low_res_torch = np.transpose(low_res_data, (0, 3, 1, 2))
     
-    # Calculate the ratio between 30m and 90m data (should be 3x)
-    ratio_y = height_30m // height_90m
-    ratio_x = width_30m // width_90m
+    # Normalize to [0, 1] range (assuming input is uint8 [0, 255])
+    high_res_torch = high_res_torch.astype(np.float32) / 255.0
+    low_res_torch = low_res_torch.astype(np.float32) / 255.0
     
-    print(f"30m DEM shape: {height_30m} x {width_30m}")
-    print(f"90m DEM shape: {height_90m} x {width_90m}")
-    print(f"Ratio: {ratio_y}x{ratio_x}")
+    print(f"Normalized high-res range: [{high_res_torch.min():.3f}, {high_res_torch.max():.3f}]")
+    print(f"Normalized low-res range: [{low_res_torch.min():.3f}, {low_res_torch.max():.3f}]")
     
-    low_res_samples = []
-    high_res_samples = []
-    
-    # Calculate safe sampling range - be more conservative
-    # For 30m data, we need 384x384 patches, so we need at least 192 pixels from edge
-    safe_margin_30m = high_res_size // 2
-    # For 90m data, we need enough space for the low-res patch
-    safe_margin_90m = (low_res_size // 2) // ratio_y
-    
-    # Ensure we have enough data to sample from
-    if height_30m < high_res_size or width_30m < high_res_size:
-        raise ValueError(f"30m DEM too small ({height_30m}x{width_30m}) for {high_res_size}x{high_res_size} patches")
-    
-    if height_90m < (low_res_size // ratio_y) or width_90m < (low_res_size // ratio_x):
-        raise ValueError(f"90m DEM too small ({height_90m}x{width_90m}) for required patches")
-    
-    max_y_30m = height_30m - safe_margin_30m
-    max_x_30m = width_30m - safe_margin_30m
-    max_y_90m = height_90m - safe_margin_90m
-    max_x_90m = width_90m - safe_margin_90m
-    
-    print(f"Safe sampling range - 30m: ({safe_margin_30m}, {safe_margin_30m}) to ({max_y_30m}, {max_x_30m})")
-    print(f"Safe sampling range - 90m: ({safe_margin_90m}, {safe_margin_90m}) to ({max_y_90m}, {max_x_90m})")
-    
-    successful_samples = 0
-    for i in range(num_samples * 2):  # Try more iterations to get enough valid samples
-        if successful_samples >= num_samples:
-            break
-            
-        # Randomly sample center coordinates for 90m data
-        center_y_90m = random.randint(safe_margin_90m, max_y_90m)
-        center_x_90m = random.randint(safe_margin_90m, max_x_90m)
-        
-        # Calculate corresponding center for 30m data
-        center_y_30m = center_y_90m * ratio_y
-        center_x_30m = center_x_90m * ratio_x
-        
-        # Extract samples
-        half_low_size = low_res_size // 2
-        half_high_size = high_res_size // 2
-        half_size_90m = half_low_size // ratio_y
-        
-        # Bounds checking for 30m data
-        if (center_y_30m - half_high_size < 0 or center_y_30m + half_high_size > height_30m or
-            center_x_30m - half_high_size < 0 or center_x_30m + half_high_size > width_30m):
-            continue
-            
-        # Bounds checking for 90m data  
-        if (center_y_90m - half_size_90m < 0 or center_y_90m + half_size_90m > height_90m or
-            center_x_90m - half_size_90m < 0 or center_x_90m + half_size_90m > width_90m):
-            continue
-        
-        try:
-            # Low resolution sample (90m data upsampled to 128x128)
-            low_res_patch = dem_90m[
-                center_y_90m - half_size_90m:center_y_90m + half_size_90m,
-                center_x_90m - half_size_90m:center_x_90m + half_size_90m
-            ]
-            
-            # Check if patch is valid
-            if low_res_patch.size == 0:
-                continue
-            
-            # Upsample low resolution patch to 128x128 using bilinear interpolation
-            low_res_patch_upsampled = low_res_patch.interp(
-                y=np.linspace(float(low_res_patch.y[0]), float(low_res_patch.y[-1]), low_res_size),
-                x=np.linspace(float(low_res_patch.x[0]), float(low_res_patch.x[-1]), low_res_size),
-                method='linear'
-            )
-            
-            # High resolution sample (30m data at 384x384)
-            high_res_patch = dem_30m[
-                center_y_30m - half_high_size:center_y_30m + half_high_size,
-                center_x_30m - half_high_size:center_x_30m + half_high_size
-            ]
-            
-            # Check if patch is valid
-            if high_res_patch.size == 0:
-                continue
-            
-            # Convert to numpy and check for valid data
-            low_res_np = low_res_patch_upsampled.values.astype(np.float32)
-            high_res_np = high_res_patch.values.astype(np.float32)
-            
-            # Skip if patches don't have the expected size
-            if low_res_np.shape != (low_res_size, low_res_size) or high_res_np.shape != (high_res_size, high_res_size):
-                continue
-                
-            # Skip if data contains NaN or invalid values
-            if np.isnan(low_res_np).any() or np.isnan(high_res_np).any():
-                continue
-            
-            # Normalize data (simple min-max normalization)
-            low_res_min, low_res_max = low_res_np.min(), low_res_np.max()
-            high_res_min, high_res_max = high_res_np.min(), high_res_np.max()
-            
-            if low_res_max > low_res_min:
-                low_res_np = (low_res_np - low_res_min) / (low_res_max - low_res_min)
-            if high_res_max > high_res_min:
-                high_res_np = (high_res_np - high_res_min) / (high_res_max - high_res_min)
-            
-            # Add channel dimension (for CNN input)
-            low_res_np = low_res_np[np.newaxis, :, :]
-            high_res_np = high_res_np[np.newaxis, :, :]
-            
-            low_res_samples.append(low_res_np)
-            high_res_samples.append(high_res_np)
-            successful_samples += 1
-            
-            if (successful_samples) % 100 == 0:
-                print(f"Created {successful_samples}/{num_samples} samples")
-                
-        except Exception as e:
-            print(f"Error creating sample {i}: {e}")
-            continue
-    
-    if successful_samples < num_samples:
-        print(f"Warning: Only created {successful_samples} samples out of {num_samples} requested")
-    
-    return np.array(low_res_samples), np.array(high_res_samples)
+    return high_res_torch, low_res_torch
 
 def train_model(model, train_loader, val_loader, num_epochs=100, learning_rate=0.001):
     """
-    Train the CNN model
+    Train the CNN model for RGB image super-resolution
     """
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Training on device: {device}")
@@ -188,6 +70,7 @@ def train_model(model, train_loader, val_loader, num_epochs=100, learning_rate=0
     model = model.to(device)
     criterion = nn.MSELoss()
     optimizer = optim.Adam(model.parameters(), lr=learning_rate)
+    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=20)
     
     train_losses = []
     val_losses = []
@@ -197,19 +80,21 @@ def train_model(model, train_loader, val_loader, num_epochs=100, learning_rate=0
     if not os.path.exists(metrics_csv_path):
         with open(metrics_csv_path, 'w', newline='') as f:
             writer = csv.writer(f)
-            writer.writerow(['epoch', 'train_loss', 'val_loss'])
-            
-    # Check if the model output matches target dimensions
+            writer.writerow(['epoch', 'train_loss', 'val_loss', 'learning_rate'])
+    
+    # Check model output dimensions
     with torch.no_grad():
-        sample_low_res = next(iter(train_loader))[0][:1].to(device)
+        sample_batch = next(iter(train_loader))
+        sample_low_res = sample_batch[0][:1].to(device)
+        sample_high_res = sample_batch[1][:1].to(device)
         sample_output = model(sample_low_res)
-        output_shape = sample_output.shape
-        target_shape = next(iter(train_loader))[1][:1].shape
-        print(f"Model output shape: {output_shape}")
-        print(f"Target shape: {target_shape}")
-        if output_shape[2:] != target_shape[2:]:
-            print(f"WARNING: Output shape {output_shape[2:]} doesn't match target shape {target_shape[2:]}")
-            print("This will cause a tensor size mismatch error during training!")
+        print(f"Input shape: {sample_low_res.shape}")
+        print(f"Target shape: {sample_high_res.shape}")
+        print(f"Model output shape: {sample_output.shape}")
+    
+    best_val_loss = float('inf')
+    patience_counter = 0
+    early_stop_patience = 50
     
     for epoch in range(num_epochs):
         # Training phase
@@ -221,14 +106,13 @@ def train_model(model, train_loader, val_loader, num_epochs=100, learning_rate=0
             optimizer.zero_grad()
             outputs = model(low_res)
             
-            # Resize high_res if necessary to match output dimensions
-            if outputs.shape[2:] != high_res.shape[2:]:
-                print(f"Resizing high_res from {high_res.shape[2:]} to {outputs.shape[2:]}")
-                high_res = F.interpolate(high_res, size=outputs.shape[2:], mode='bilinear', align_corners=False)
+            # Combined loss
+            mse_loss = criterion(outputs, high_res)
+            edge_loss = edge_preserving_loss(outputs, high_res)
+            grad_loss = gradient_loss(outputs, high_res)
             
-            total_loss = F.mse_loss(outputs, high_res)
-            total_loss = total_loss + edge_preserving_loss(outputs, high_res) * 0.1
-            total_loss = total_loss + gradient_loss(outputs, high_res) * 0.5
+            total_loss = mse_loss + 0.1 * edge_loss + 0.1 * grad_loss
+            
             total_loss.backward()
             optimizer.step()
             
@@ -241,13 +125,6 @@ def train_model(model, train_loader, val_loader, num_epochs=100, learning_rate=0
             for low_res, high_res in val_loader:
                 low_res, high_res = low_res.to(device), high_res.to(device)
                 outputs = model(low_res)
-                
-                # Directly use outputs against high_res for validation too
-                
-                # Resize high_res if necessary to match output dimensions
-                if outputs.shape[2:] != high_res.shape[2:]:
-                    high_res = F.interpolate(high_res, size=outputs.shape[2:], mode='bilinear', align_corners=False)
-                
                 val_loss += criterion(outputs, high_res).item()
         
         train_loss /= len(train_loader)
@@ -256,69 +133,97 @@ def train_model(model, train_loader, val_loader, num_epochs=100, learning_rate=0
         train_losses.append(train_loss)
         val_losses.append(val_loss)
         
+        # Learning rate scheduling
+        scheduler.step(val_loss)
+        current_lr = optimizer.param_groups[0]['lr']
+        
         # Write metrics to CSV for each epoch
         with open(metrics_csv_path, 'a', newline='') as f:
             writer = csv.writer(f)
-            writer.writerow([epoch + 1, train_loss, val_loss])
+            writer.writerow([epoch + 1, train_loss, val_loss, current_lr])
+        
+        # Early stopping
+        if val_loss < best_val_loss:
+            best_val_loss = val_loss
+            patience_counter = 0
+            # Save best model
+            torch.save(model.state_dict(), 'data/best_model.pth')
+        else:
+            patience_counter += 1
+        
+        if patience_counter >= early_stop_patience:
+            print(f'Early stopping at epoch {epoch+1}')
+            break
 
         if (epoch + 1) % 10 == 0:
-            print(f'Epoch [{epoch+1}/{num_epochs}], Train Loss: {train_loss:.6f}, Val Loss: {val_loss:.6f}')
+            print(f'Epoch [{epoch+1}/{num_epochs}], Train Loss: {train_loss:.6f}, Val Loss: {val_loss:.6f}, LR: {current_lr:.8f}')
+            
             # Print GPU memory usage if using CUDA
             if device.type == "cuda":
                 memory_allocated = torch.cuda.memory_allocated(0) / 1024**3
                 memory_reserved = torch.cuda.memory_reserved(0) / 1024**3
                 print(f'GPU Memory - Allocated: {memory_allocated:.2f} GB, Reserved: {memory_reserved:.2f} GB')
 
-            # Save TorchScript traced model every 10 epochs
+            # Save TorchScript traced model periodically
             model.eval()
-            sample_input = torch.randn(1, 1, 128, 128).to(device)
+            sample_input = torch.randn(1, 3, 64, 64).to(device)  # RGB input
             traced_model = torch.jit.trace(model, sample_input)
-            traced_model_path = f'data/CNN_super_resolution_traced_epoch_{epoch+1:03d}.pt'
+            traced_model_path = f'data/RGB_CNN_super_resolution_traced_epoch_{epoch+1:03d}.pt'
             traced_model.save(traced_model_path)
-            model.train()  # Switch back to training mode
+            model.train()
             print(f'Traced model saved as {traced_model_path}')
+    
     return train_losses, val_losses
 
 
-
 if __name__ == "__main__":
-    print("Loading DEM data...")
+    print("Loading RGB image data...")
     
-    # Load the DEM data
-    dem_30m_original = xr.open_dataarray('data/DEM_30m.nc', chunks=256)
-    dem_90m = xr.open_dataarray('data/DEM_90m.nc', chunks=256)
+    # Load the RGB image datasets created in step 1
+    high_res_data = xr.open_dataarray('data/train.nc')  # 256x256 images
+    low_res_data = xr.open_dataarray('data/train_coarse2.nc')  # 64x64 images
     
-    print(f"30m DEM shape: {dem_30m_original.shape}")
-    print(f"90m DEM shape: {dem_90m.shape}")
+    print(f"High-resolution data shape: {high_res_data.shape}")
+    print(f"Low-resolution data shape: {low_res_data.shape}")
     
-    # Create 500 samples
-    print("\nCreating samples...")
-    # Since our model output after clipping is 384x384, we need to make sure high_res_size matches this
-    low_res_samples, high_res_samples = create_samples(
-        dem_30m_original, dem_90m, num_samples=1500, low_res_size=128, high_res_size=384
-    )
+    # Convert xarray to numpy
+    high_res_np = high_res_data.values  # (N_samples, height, width, channels)
+    low_res_np = low_res_data.values
     
-    print(f"Created samples - Low res shape: {low_res_samples.shape}")
-    print(f"Created samples - High res shape: {high_res_samples.shape}")
+    # Prepare data for training
+    high_res_torch, low_res_torch = prepare_rgb_data(high_res_np, low_res_np)
     
-    # Split into training (300) and validation (200) sets
-    train_low, val_low, train_high, val_high = train_test_split(
-        low_res_samples, high_res_samples, 
-        train_size=300, test_size=200, random_state=42
-    )
+    print(f"Prepared high-res shape: {high_res_torch.shape}")
+    print(f"Prepared low-res shape: {low_res_torch.shape}")
     
-    print(f"\nTraining set: {train_low.shape[0]} samples")
-    print(f"Validation set: {val_low.shape[0]} samples")
+    # Split into training and validation sets (80/20 split)
+    train_ratio = 0.8
+    n_samples = high_res_torch.shape[0]
+    n_train = int(n_samples * train_ratio)
     
-    # Create datasets and data loaders (smaller batch size due to larger images)
-    train_dataset = DEMDataset(train_low, train_high)
-    val_dataset = DEMDataset(val_low, val_high)
+    # Random shuffle and split
+    indices = np.random.permutation(n_samples)
+    train_indices = indices[:n_train]
+    val_indices = indices[n_train:]
     
-    train_loader = DataLoader(train_dataset, batch_size=4, shuffle=True)
-    val_loader = DataLoader(val_dataset, batch_size=4, shuffle=False)
+    train_high = high_res_torch[train_indices]
+    train_low = low_res_torch[train_indices]
+    val_high = high_res_torch[val_indices]
+    val_low = low_res_torch[val_indices]
+    
+    print(f"\nTraining set: {train_high.shape[0]} samples")
+    print(f"Validation set: {val_high.shape[0]} samples")
+    
+    # Create datasets and data loaders
+    train_dataset = RGBImageDataset(train_low, train_high)
+    val_dataset = RGBImageDataset(val_low, val_high)
+    
+    batch_size = 8  # Adjust based on GPU memory
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=2)
+    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=2)
     
     # Create and train the model
-    print("\nCreating CNN model...")
+    print("\nCreating RGB CNN model...")
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
     
@@ -326,33 +231,44 @@ if __name__ == "__main__":
         print(f"GPU: {torch.cuda.get_device_name(0)}")
         print(f"GPU Memory: {torch.cuda.get_device_properties(0).total_memory / 1024**3:.1f} GB")
     
-    
     model = model.to(device)
     print(f"Model parameters: {sum(p.numel() for p in model.parameters())}")
-    print(f"Model moved to: {device}")
     
     print("\nStarting training...")
     train_losses, val_losses = train_model(model, train_loader, val_loader, num_epochs=NUM_EPOCH)
     
-    # Save only the final TorchScript traced model
+    # Save the final TorchScript traced model
     model.eval()
-    sample_input = torch.randn(1, 1, 128, 128).to(device)
+    sample_input = torch.randn(1, 3, 64, 64).to(device)
     traced_model = torch.jit.trace(model, sample_input)
-    traced_model.save('data/CNN_super_resolution_traced_final.pt')
-    print("\nFinal TorchScript traced model saved as 'data/CNN_super_resolution_traced_final.pt'")
-    
+    traced_model.save('data/RGB_CNN_super_resolution_traced_final.pt')
+    print("\nFinal TorchScript traced model saved as 'data/RGB_CNN_super_resolution_traced_final.pt'")
 
     # Plot training curves
-    plt.figure(figsize=(10, 5))
+    plt.figure(figsize=(12, 5))
+    
+    plt.subplot(1, 2, 1)
     plt.plot(train_losses, label='Training Loss')
     plt.plot(val_losses, label='Validation Loss')
     plt.xlabel('Epoch')
     plt.ylabel('MSE Loss')
     plt.legend()
     plt.title('Training and Validation Loss')
-    plt.savefig('data/training_curves.png')
+    plt.yscale('log')
+    
+    plt.subplot(1, 2, 2)
+    plt.plot(train_losses[-100:], label='Training Loss (Last 100)')
+    plt.plot(val_losses[-100:], label='Validation Loss (Last 100)')
+    plt.xlabel('Epoch')
+    plt.ylabel('MSE Loss')
+    plt.legend()
+    plt.title('Training Progress (Last 100 Epochs)')
+    
+    plt.tight_layout()
+    plt.savefig('data/RGB_training_curves.png', dpi=150, bbox_inches='tight')
     plt.show()
     
     print(f"\nFinal Training Loss: {train_losses[-1]:.6f}")
     print(f"Final Validation Loss: {val_losses[-1]:.6f}")
-    
+    print(f"Best Validation Loss: {min(val_losses):.6f}")
+    print("Training completed!")
