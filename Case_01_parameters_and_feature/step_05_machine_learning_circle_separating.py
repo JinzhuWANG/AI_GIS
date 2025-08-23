@@ -1,11 +1,9 @@
-
+import numpy as np
 import pandas as pd
 import seaborn as sns
-import numpy as np
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 import torch.optim as optim
 
 from matplotlib import pyplot as plt
@@ -64,7 +62,7 @@ print(f"Total parameters: {W1.numel() + b1.numel() + W2.numel() + b2.numel()}")
 
 # Training parameters
 learning_rate = 0.01
-epochs = 1000
+epochs = 100000
 
 # Create optimizer
 optimizer = optim.SGD([W1, b1, W2, b2], lr=learning_rate)

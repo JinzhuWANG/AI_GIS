@@ -20,5 +20,5 @@ dependencies:
   - seaborn=0.13.2
   - pip
   - pip:
-      - torch
-      - torchvision
+      - torch --index-url https://download.pytorch.org/whl/cu126
+      - torchvision --index-url https://download.pytorch.org/whl/cu126
