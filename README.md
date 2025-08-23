@@ -30,9 +30,6 @@ AI_GIS/
 │   ├── step_02_upsample_use_sklearn.py     # Traditional upsampling methods comparison
 │   ├── step_03_upsample_use_CNN_train.py   # CNN model training for super-resolution
 │   └── step_04_upsample_use_CNN_pred_RGB.py # CNN prediction and RGB output generation
-├── installer/                               # Development environment installers
-│   ├── Miniforge3-Windows-x86_64.exe       # Conda package manager installer
-│   └── VSCodeUserSetup-x64-1.103.1.exe     # Visual Studio Code installer
 ├── requirements.yml                         # Conda environment specification
 ├── LICENSE                                  # MIT License file
 └── README.md                               # Project documentation
@@ -75,8 +72,7 @@ For questions or collaboration opportunities, please contact: wangjinzhulala@gma
 ### Installation
 
 1. **Install Miniforge** (if not already installed):
-   - Windows users can use the installer provided in `installer/Miniforge3-Windows-x86_64.exe`
-   - Or download from [miniforge releases](https://github.com/conda-forge/miniforge/releases)
+   - Download from [miniforge releases](https://github.com/conda-forge/miniforge/releases)
 
 2. **Create the conda environment**:
    ```bash
