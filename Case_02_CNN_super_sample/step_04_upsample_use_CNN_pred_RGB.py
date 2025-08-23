@@ -104,7 +104,8 @@ if __name__ == "__main__":
         'data/images/CNN_deep', 
         'data/images/CNN_deep_edge_loss', 
         'data/images/CNN_shallow', 
-        'data/images/CNN_shallow_edge_loss'
+        'data/images/CNN_shallow_edge_loss',
+        'data/images/CNN_UNet'
     ]:
         
         os.makedirs(f'{model_dir}/test', exist_ok=True)
@@ -137,7 +138,7 @@ if __name__ == "__main__":
         'shallow' : xr.load_dataarray('data/images/CNN_shallow/test/RGB_CNN_predictions.nc'),
         'shallow_edge_loss' : xr.load_dataarray('data/images/CNN_shallow_edge_loss/test/RGB_CNN_predictions.nc'),
         'deep' : xr.load_dataarray('data/images/CNN_deep/test/RGB_CNN_predictions.nc'),
-        'deep_edge_loss' : xr.load_dataarray('data/images/CNN_deep_edge_loss/test/RGB_CNN_predictions.nc')
+        'deep_edge_loss' : xr.load_dataarray('data/images/CNN_deep_edge_loss/test/RGB_CNN_predictions.nc'),
     }
 
     for idx in range(len(glob('data/images/test/original/*.png'))):
