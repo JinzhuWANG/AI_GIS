@@ -1,6 +1,6 @@
 # AI_GIS
 
-[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 13+](https://img.shields.io/badge/python-13%2B-blue.svg)](https://www.python.org/downloads/)
 
 A project combining artificial intelligence and geographic information systems.
@@ -8,6 +8,12 @@ A project combining artificial intelligence and geographic information systems.
 ## Overview
 
 This repository contains tools and resources for integrating AI technologies with GIS applications.
+
+**Data Sources**: All data used in this project are obtained from publicly accessible sources. The URLs and references for these data sources are presented when loading the data in the respective scripts.
+
+## Contact
+
+For questions or collaboration opportunities, please contact: wangjinzhulala@gmail.com
 
 ## Getting Started
 
@@ -32,4 +38,4 @@ mamba env create -f requirements.yml
 
 ## License
 
-This project is licensed under the GNU General Public License v3.0 (GPL-3.0) - see the [LICENSE](LICENSE) file for details.
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
