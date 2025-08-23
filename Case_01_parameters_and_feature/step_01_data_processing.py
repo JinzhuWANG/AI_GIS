@@ -6,7 +6,8 @@ import seaborn as sns
 #   Height Weight Data
 # ###################################################################
 
-height_weight = pd.read_csv('data/height-weight.csv')
+# Read data.  or data/height-weight.csv
+height_weight = pd.read_csv('https://raw.githubusercontent.com/rebmaryds/Machine-Learning-Python/refs/heads/master/Datasets/height-weight.csv')
 
 height_weight_20 = height_weight.sample(n=20, random_state=42)
 height_weight_20.to_csv('data/height-weight-20.csv', index=False)
