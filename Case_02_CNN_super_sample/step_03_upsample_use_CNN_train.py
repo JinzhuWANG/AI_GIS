@@ -13,17 +13,16 @@ from torch.utils.data import Dataset, DataLoader
 from helper import( 
     SuperResolutionCNN_shallow,
     SuperResolutionCNN_deep,
-    UNet,
     edge_preserving_loss
 )
 
 # Initialize the model (now adapted for RGB images with 64-32-64-128-256 architecture)
-model = UNet()
+model = SuperResolutionCNN_shallow()
 MAX_EPOCH = 100        # Number of training epochs
 NUM_WORKERS = 0        # Set to 0 to avoid multiprocessing issues in some environments
 
 # Define the root directory for saving metrics and models
-SAVE_PATH = 'data/images/CNN_UNet'
+SAVE_PATH = 'data/images/CNN_shallow'
 os.makedirs(SAVE_PATH, exist_ok=True)
 
 # Set random seeds for reproducibility
@@ -148,9 +147,6 @@ def train_model(model, train_loader, val_loader, num_epochs=100, learning_rate=0
         # Save best model only if validation loss improved
         if val_loss < best_val_loss:
             best_val_loss = val_loss
-            torch.save(model.state_dict(), os.path.join(SAVE_PATH, 'best_model.pth'))
-            
-            # Also save best model as traced model
             model.eval()
             sample_input = torch.randn(1, 3, 64, 64).to(device)  # RGB input
             traced_model = torch.jit.trace(model, sample_input)
@@ -158,7 +154,6 @@ def train_model(model, train_loader, val_loader, num_epochs=100, learning_rate=0
             model.train()  # Switch back to training mode
             
             print(f"✓ New best model saved! Val Loss: {val_loss:.6f}")
-            print(f"✓ Best traced model saved as best_model_traced.pt")
         else:
             print(f"Val Loss: {val_loss:.6f} (Best: {best_val_loss:.6f})")
         

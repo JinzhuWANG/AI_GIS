@@ -1,6 +1,11 @@
-# Ignore all data files
-Case_01_parameters_and_feature/data/
-Case_02_CNN_super_sample/data/
+# Ignore all data files except .gitignore
+Case_01_parameters_and_feature/data/*
+!Case_01_parameters_and_feature/data/.gitignore
+Case_02_CNN_super_sample/data/*
+!Case_02_CNN_super_sample/data/.gitignore
+
+
+
 
 installer/
 .conda/

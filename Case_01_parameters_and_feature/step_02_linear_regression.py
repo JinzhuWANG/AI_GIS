@@ -35,7 +35,7 @@ sns.scatterplot(x=adjust_range_1, y=losses)
 
 # Adjust b
 best_a = a - 0.2
-adjust_range_b = np.arange(-25, 25, 1)
+adjust_range_b = np.arange(-1, 1, 0.1)
 
 losses_b = []
 for adjust in adjust_range_b:
@@ -48,7 +48,7 @@ sns.scatterplot(x=adjust_range_b, y=losses_b)
 
 
 # Best guess
-best_b = b + 1
+best_b = b + 0
 pred = best_a * data['Height'] + best_b
 loss = abs(pred - data['Weight']).mean()
 

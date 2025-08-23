@@ -53,5 +53,12 @@ pred_y_original = pred_y + 10
 
 sns.scatterplot(data=data, x='x1', y='y1', color='blue', label='Set 1')
 sns.scatterplot(data=data, x='x2', y='y2', color='red', label='Set 2')
-sns.lineplot( x=pred_x_original, y=pred_y_original, color='green', sort=False, label='Decision Line')
+sns.lineplot(x=pred_x_original, y=pred_y_original, color='green', sort=False, label='Decision Line')
 
+
+pred_df = pd.DataFrame({
+    'x': pred_x_original,
+    'y': pred_y_original
+})
+
+pred_df.to_csv('data/circle_data_decision_line.csv')
