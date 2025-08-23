@@ -1,6 +1,8 @@
-from matplotlib import pyplot as plt
+import os
 import numpy as np
 import xarray as xr
+
+from PIL import Image
 
 from datasets import load_dataset
 from sklearn.model_selection import train_test_split
@@ -52,7 +54,29 @@ train_xr_coarse2 = train_xr.coarsen(height=4, width=4, boundary='trim').mean().a
 test_xr_coarse2 = test_xr.coarsen(height=4, width=4, boundary='trim').mean().astype(np.uint8)
 
 
-# Save to disk
+# Save to disk as PNG files
+os.makedirs('data/images/train/original', exist_ok=True)
+os.makedirs('data/images/train/coarse', exist_ok=True)
+os.makedirs('data/images/test/original', exist_ok=True)
+os.makedirs('data/images/test/coarse', exist_ok=True)
+
+for i, img_array in enumerate(train_data):
+    img_pil = Image.fromarray(img_array.astype(np.uint8))
+    img_pil.save(f'data/images/train/original/image_{i:04d}.png')
+    coarse_img = train_xr_coarse2[i].values.astype(np.uint8)
+    coarse_pil = Image.fromarray(coarse_img)
+    coarse_pil.save(f'data/images/train/coarse/image_{i:04d}.png')
+
+for i, img_array in enumerate(test_data):
+    img_pil = Image.fromarray(img_array.astype(np.uint8))
+    img_pil.save(f'data/images/test/original/image_{i:04d}.png')
+    coarse_img = test_xr_coarse2[i].values.astype(np.uint8)
+    coarse_pil = Image.fromarray(coarse_img)
+    coarse_pil.save(f'data/images/test/coarse/image_{i:04d}.png')
+
+
+
+# Save NetCDF files to corresponding directories
 encoding={
     'data': {
         'dtype': 'uint8',
@@ -66,7 +90,8 @@ test_xr.name = 'data'
 train_xr_coarse2.name = 'data'
 test_xr_coarse2.name = 'data'
 
-train_xr.to_netcdf('data/train.nc', encoding=encoding)
-test_xr.to_netcdf('data/test.nc', encoding=encoding)
-train_xr_coarse2.to_netcdf('data/train_coarse2.nc', encoding=encoding)
-test_xr_coarse2.to_netcdf('data/test_coarse2.nc', encoding=encoding)
+train_xr.to_netcdf('data/images/train/original/train.nc', encoding=encoding)
+test_xr.to_netcdf('data/images/test/original/test.nc', encoding=encoding)
+train_xr_coarse2.to_netcdf('data/images/train/coarse/train_coarse2.nc', encoding=encoding)
+test_xr_coarse2.to_netcdf('data/images/test/coarse/test_coarse2.nc', encoding=encoding)
+

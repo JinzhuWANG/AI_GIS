@@ -79,7 +79,7 @@ def train_model(model, train_loader, val_loader, num_epochs=100, learning_rate=0
     val_losses = []
     
     # Write header if file does not exist
-    metrics_csv_path = 'data/performance_metrics.csv'
+    metrics_csv_path = 'data/images/performance_metrics.csv'
     if not os.path.exists(metrics_csv_path):
         with open(metrics_csv_path, 'w', newline='') as f:
             writer = csv.writer(f)
@@ -175,7 +175,7 @@ def train_model(model, train_loader, val_loader, num_epochs=100, learning_rate=0
             best_val_loss = val_loss
             patience_counter = 0
             # Save best model
-            torch.save(model.state_dict(), 'data/best_model.pth')
+            torch.save(model.state_dict(), 'data/images/best_model.pth')
             print(f"✓ New best model saved! Val Loss: {val_loss:.6f}")
         else:
             patience_counter += 1
@@ -192,7 +192,7 @@ def train_model(model, train_loader, val_loader, num_epochs=100, learning_rate=0
             model.eval()
             sample_input = torch.randn(1, 3, 64, 64).to(device)  # RGB input
             traced_model = torch.jit.trace(model, sample_input)
-            traced_model_path = f'data/RGB_CNN_super_resolution_traced_epoch_{epoch+1:03d}.pt'
+            traced_model_path = f'data/images/RGB_CNN_super_resolution_traced_epoch_{epoch+1:03d}.pt'
             traced_model.save(traced_model_path)
             model.train()
             print(f'Traced model saved as {traced_model_path}')
@@ -210,8 +210,8 @@ if __name__ == "__main__":
     print("Loading RGB image data...")
     
     # Load the RGB image datasets created in step 1
-    high_res_data = xr.open_dataarray('data/train.nc')  # 256x256 images
-    low_res_data = xr.open_dataarray('data/train_coarse2.nc')  # 64x64 images
+    high_res_data = xr.open_dataarray('data/images/train/original/train.nc')  # 256x256 images
+    low_res_data = xr.open_dataarray('data/images/train/coarse/train_coarse2.nc')  # 64x64 images
     
     print(f"High-resolution data shape: {high_res_data.shape}")
     print(f"Low-resolution data shape: {low_res_data.shape}")
@@ -249,8 +249,9 @@ if __name__ == "__main__":
     val_dataset = RGBImageDataset(val_low, val_high)
     
     batch_size = 8  # Adjust based on GPU memory
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=2)
-    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=2)
+    # Set num_workers=0 to avoid multiprocessing issues
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=0)
+    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=0)
     
     # Create and train the model
     print("\nCreating RGB CNN model...")
@@ -271,8 +272,8 @@ if __name__ == "__main__":
     model.eval()
     sample_input = torch.randn(1, 3, 64, 64).to(device)
     traced_model = torch.jit.trace(model, sample_input)
-    traced_model.save('data/RGB_CNN_super_resolution_traced_final.pt')
-    print("\nFinal TorchScript traced model saved as 'data/RGB_CNN_super_resolution_traced_final.pt'")
+    traced_model.save('data/images/RGB_CNN_super_resolution_traced_final.pt')
+    print("\nFinal TorchScript traced model saved as 'data/images/RGB_CNN_super_resolution_traced_final.pt'")
 
     # Plot training curves
     plt.figure(figsize=(12, 5))
@@ -295,7 +296,7 @@ if __name__ == "__main__":
     plt.title('Training Progress (Last 100 Epochs)')
     
     plt.tight_layout()
-    plt.savefig('data/RGB_training_curves.png', dpi=150, bbox_inches='tight')
+    plt.savefig('data/images/RGB_training_curves.png', dpi=150, bbox_inches='tight')
     plt.show()
     
     print(f"\nFinal Training Loss: {train_losses[-1]:.6f}")

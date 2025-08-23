@@ -185,15 +185,15 @@ if __name__ == "__main__":
     print("\n1. Loading RGB image datasets...")
     
     # Load original high-resolution images (256x256)
-    high_res_original = xr.open_dataarray('data/test.nc')
+    high_res_original = xr.open_dataarray('data/images/test/original/test.nc')
     print(f"Original high-resolution images shape: {high_res_original.shape}")
     
     # Load low-resolution images (64x64)
-    low_res_images = xr.open_dataarray('data/test_coarse2.nc')
+    low_res_images = xr.open_dataarray('data/images/test/coarse/test_coarse2.nc')
     print(f"Low-resolution images shape: {low_res_images.shape}")
     
     # Load bilinear interpolated result (from step 2)
-    high_res_bilinear = xr.open_dataarray('data/train_upsampled_bilinear.nc')
+    high_res_bilinear = xr.open_dataarray('data/images/train/coarse/train_upsampled_bilinear.nc')
     print(f"Bilinear upsampled images shape: {high_res_bilinear.shape}")
     
     # Convert to numpy arrays
@@ -216,7 +216,7 @@ if __name__ == "__main__":
         eval_bilinear = high_res_bilinear_np[:n_eval]
     
     # Predict using CNN model if available
-    cnn_model_path = 'data/RGB_CNN_super_resolution_traced_final.pt'
+    cnn_model_path = 'data/images/RGB_CNN_super_resolution_traced_final.pt'
     if os.path.exists(cnn_model_path):
         print(f"\n2. Generating CNN predictions...")
         eval_cnn = predict_with_cnn_model(eval_low_res, cnn_model_path)
