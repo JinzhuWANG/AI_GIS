@@ -1,9 +1,8 @@
 import csv
 import os
+import random
 import xarray as xr
 import numpy as np
-import random
-import matplotlib.pyplot as plt
 
 import torch
 import torch.nn as nn
@@ -13,14 +12,19 @@ from tqdm.auto import tqdm
 from torch.utils.data import Dataset, DataLoader
 from helper import( 
     SuperResolutionCNN_shallow,
-    EnhancedSRCNN_4x, 
-    edge_preserving_loss, 
-    gradient_loss
+    SuperResolutionCNN_deep,
+    UNet,
+    edge_preserving_loss
 )
 
 # Initialize the model (now adapted for RGB images with 64-32-64-128-256 architecture)
-model = SuperResolutionCNN_shallow()
-NUM_EPOCH = 1000
+model = UNet()
+MAX_EPOCH = 100        # Number of training epochs
+NUM_WORKERS = 0        # Set to 0 to avoid multiprocessing issues in some environments
+
+# Define the root directory for saving metrics and models
+SAVE_PATH = 'data/images/CNN_UNet'
+os.makedirs(SAVE_PATH, exist_ok=True)
 
 # Set random seeds for reproducibility
 torch.manual_seed(42)
@@ -46,22 +50,16 @@ def prepare_rgb_data(high_res_data, low_res_data):
     Input: high_res_data (N, H, W, C), low_res_data (N, H_low, W_low, C)
     Output: normalized tensors in (N, C, H, W) format
     """
-    print(f"Preparing RGB data...")
-    print(f"High-res shape: {high_res_data.shape}")
-    print(f"Low-res shape: {low_res_data.shape}")
-    
+
     # Convert from (N, H, W, C) to (N, C, H, W) format for PyTorch
     high_res_torch = np.transpose(high_res_data, (0, 3, 1, 2))
     low_res_torch = np.transpose(low_res_data, (0, 3, 1, 2))
-    
     # Normalize to [0, 1] range (assuming input is uint8 [0, 255])
     high_res_torch = high_res_torch.astype(np.float32) / 255.0
     low_res_torch = low_res_torch.astype(np.float32) / 255.0
-    
-    print(f"Normalized high-res range: [{high_res_torch.min():.3f}, {high_res_torch.max():.3f}]")
-    print(f"Normalized low-res range: [{low_res_torch.min():.3f}, {low_res_torch.max():.3f}]")
-    
+
     return high_res_torch, low_res_torch
+
 
 def train_model(model, train_loader, val_loader, num_epochs=100, learning_rate=0.001):
     """
@@ -73,31 +71,17 @@ def train_model(model, train_loader, val_loader, num_epochs=100, learning_rate=0
     model = model.to(device)
     criterion = nn.MSELoss()
     optimizer = optim.Adam(model.parameters(), lr=learning_rate)
-    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=20)
     
     train_losses = []
     val_losses = []
+    best_val_loss = float('inf')  # Track the best validation loss
     
     # Write header if file does not exist
-    metrics_csv_path = 'data/images/performance_metrics.csv'
+    metrics_csv_path = os.path.join(SAVE_PATH, 'performance_metrics.csv')
     if not os.path.exists(metrics_csv_path):
         with open(metrics_csv_path, 'w', newline='') as f:
             writer = csv.writer(f)
-            writer.writerow(['epoch', 'train_loss', 'val_loss', 'learning_rate'])
-    
-    # Check model output dimensions
-    with torch.no_grad():
-        sample_batch = next(iter(train_loader))
-        sample_low_res = sample_batch[0][:1].to(device)
-        sample_high_res = sample_batch[1][:1].to(device)
-        sample_output = model(sample_low_res)
-        print(f"Input shape: {sample_low_res.shape}")
-        print(f"Target shape: {sample_high_res.shape}")
-        print(f"Model output shape: {sample_output.shape}")
-    
-    best_val_loss = float('inf')
-    patience_counter = 0
-    early_stop_patience = 50
+            writer.writerow(['epoch', 'train_loss', 'val_loss'])
     
     for epoch in range(num_epochs):
         print(f"\nEpoch [{epoch+1}/{num_epochs}]")
@@ -114,21 +98,16 @@ def train_model(model, train_loader, val_loader, num_epochs=100, learning_rate=0
             outputs = model(low_res)
             
             # Combined loss
-            mse_loss = criterion(outputs, high_res)
-            edge_loss = edge_preserving_loss(outputs, high_res)
-            grad_loss = gradient_loss(outputs, high_res)
-            
-            total_loss = mse_loss + 0.1 * edge_loss + 0.1 * grad_loss
-            
-            total_loss.backward()
+            mse_loss = criterion(outputs, high_res) #+ 0.5 * edge_preserving_loss(outputs, high_res)
+            mse_loss.backward()
             optimizer.step()
             
-            train_loss += total_loss.item()
+            train_loss += mse_loss.item()
             
             # Update training progress bar
             current_train_loss = train_loss / (batch_idx + 1)
             train_pbar.set_postfix({
-                'Loss': f'{total_loss.item():.6f}',
+                'Loss': f'{mse_loss.item():.6f}',
                 'Avg Loss': f'{current_train_loss:.6f}'
             })
         
@@ -143,7 +122,7 @@ def train_model(model, train_loader, val_loader, num_epochs=100, learning_rate=0
             for batch_idx, (low_res, high_res) in enumerate(val_pbar):
                 low_res, high_res = low_res.to(device), high_res.to(device)
                 outputs = model(low_res)
-                batch_val_loss = criterion(outputs, high_res).item()
+                batch_val_loss = criterion(outputs, high_res).item() #+ 0.5 * edge_preserving_loss(outputs, high_res).item()
                 val_loss += batch_val_loss
                 
                 # Update validation progress bar
@@ -158,41 +137,40 @@ def train_model(model, train_loader, val_loader, num_epochs=100, learning_rate=0
         train_loss /= len(train_loader)
         val_loss /= len(val_loader)
         
-        train_losses.append(train_loss)
-        val_losses.append(val_loss)
-        
-        # Learning rate scheduling
-        scheduler.step(val_loss)
-        current_lr = optimizer.param_groups[0]['lr']
+        train_losses.append(float(train_loss))
+        val_losses.append(float(val_loss))
         
         # Write metrics to CSV for each epoch
         with open(metrics_csv_path, 'a', newline='') as f:
             writer = csv.writer(f)
-            writer.writerow([epoch + 1, train_loss, val_loss, current_lr])
+            writer.writerow([epoch + 1, train_loss, val_loss])
         
-        # Early stopping
+        # Save best model only if validation loss improved
         if val_loss < best_val_loss:
             best_val_loss = val_loss
-            patience_counter = 0
-            # Save best model
-            torch.save(model.state_dict(), 'data/images/best_model.pth')
+            torch.save(model.state_dict(), os.path.join(SAVE_PATH, 'best_model.pth'))
+            
+            # Also save best model as traced model
+            model.eval()
+            sample_input = torch.randn(1, 3, 64, 64).to(device)  # RGB input
+            traced_model = torch.jit.trace(model, sample_input)
+            traced_model.save(os.path.join(SAVE_PATH, 'best_model_traced.pt'))
+            model.train()  # Switch back to training mode
+            
             print(f"✓ New best model saved! Val Loss: {val_loss:.6f}")
+            print(f"✓ Best traced model saved as best_model_traced.pt")
         else:
-            patience_counter += 1
+            print(f"Val Loss: {val_loss:.6f} (Best: {best_val_loss:.6f})")
         
         # Print epoch summary
-        print(f"Train Loss: {train_loss:.6f} | Val Loss: {val_loss:.6f} | Best Val: {best_val_loss:.6f} | LR: {current_lr:.8f} | Patience: {patience_counter}/{early_stop_patience}")
-        
-        if patience_counter >= early_stop_patience:
-            print(f'Early stopping at epoch {epoch+1}')
-            break
+        print(f"Train Loss: {train_loss:.6f} | Val Loss: {val_loss:.6f}")
 
         # Save TorchScript traced model periodically (every 50 epochs)
         if (epoch + 1) % 50 == 0:
             model.eval()
             sample_input = torch.randn(1, 3, 64, 64).to(device)  # RGB input
             traced_model = torch.jit.trace(model, sample_input)
-            traced_model_path = f'data/images/RGB_CNN_super_resolution_traced_epoch_{epoch+1:03d}.pt'
+            traced_model_path = os.path.join(SAVE_PATH, f'RGB_CNN_super_resolution_traced_epoch_{epoch+1:03d}.pt')
             traced_model.save(traced_model_path)
             model.train()
             print(f'Traced model saved as {traced_model_path}')
@@ -211,20 +189,12 @@ if __name__ == "__main__":
     
     # Load the RGB image datasets created in step 1
     high_res_data = xr.open_dataarray('data/images/train/original/train.nc')  # 256x256 images
-    low_res_data = xr.open_dataarray('data/images/train/coarse/train_coarse2.nc')  # 64x64 images
-    
-    print(f"High-resolution data shape: {high_res_data.shape}")
-    print(f"Low-resolution data shape: {low_res_data.shape}")
-    
+    low_res_data = xr.open_dataarray('data/images/train/coarse/train_coarse.nc')  # 64x64 images
+
     # Convert xarray to numpy
     high_res_np = high_res_data.values  # (N_samples, height, width, channels)
     low_res_np = low_res_data.values
-    
-    # Prepare data for training
     high_res_torch, low_res_torch = prepare_rgb_data(high_res_np, low_res_np)
-    
-    print(f"Prepared high-res shape: {high_res_torch.shape}")
-    print(f"Prepared low-res shape: {low_res_torch.shape}")
     
     # Split into training and validation sets (80/20 split)
     train_ratio = 0.8
@@ -250,11 +220,10 @@ if __name__ == "__main__":
     
     batch_size = 8  # Adjust based on GPU memory
     # Set num_workers=0 to avoid multiprocessing issues
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=0)
-    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=0)
-    
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=NUM_WORKERS)
+    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=NUM_WORKERS)
+
     # Create and train the model
-    print("\nCreating RGB CNN model...")
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
     
@@ -266,40 +235,10 @@ if __name__ == "__main__":
     print(f"Model parameters: {sum(p.numel() for p in model.parameters())}")
     
     print("\nStarting training...")
-    train_losses, val_losses = train_model(model, train_loader, val_loader, num_epochs=NUM_EPOCH)
+    train_losses, val_losses = train_model(model, train_loader, val_loader, num_epochs=MAX_EPOCH)
     
     # Save the final TorchScript traced model
     model.eval()
     sample_input = torch.randn(1, 3, 64, 64).to(device)
     traced_model = torch.jit.trace(model, sample_input)
-    traced_model.save('data/images/RGB_CNN_super_resolution_traced_final.pt')
-    print("\nFinal TorchScript traced model saved as 'data/images/RGB_CNN_super_resolution_traced_final.pt'")
-
-    # Plot training curves
-    plt.figure(figsize=(12, 5))
-    
-    plt.subplot(1, 2, 1)
-    plt.plot(train_losses, label='Training Loss')
-    plt.plot(val_losses, label='Validation Loss')
-    plt.xlabel('Epoch')
-    plt.ylabel('MSE Loss')
-    plt.legend()
-    plt.title('Training and Validation Loss')
-    plt.yscale('log')
-    
-    plt.subplot(1, 2, 2)
-    plt.plot(train_losses[-100:], label='Training Loss (Last 100)')
-    plt.plot(val_losses[-100:], label='Validation Loss (Last 100)')
-    plt.xlabel('Epoch')
-    plt.ylabel('MSE Loss')
-    plt.legend()
-    plt.title('Training Progress (Last 100 Epochs)')
-    
-    plt.tight_layout()
-    plt.savefig('data/images/RGB_training_curves.png', dpi=150, bbox_inches='tight')
-    plt.show()
-    
-    print(f"\nFinal Training Loss: {train_losses[-1]:.6f}")
-    print(f"Final Validation Loss: {val_losses[-1]:.6f}")
-    print(f"Best Validation Loss: {min(val_losses):.6f}")
-    print("Training completed!")
+    traced_model.save(os.path.join(SAVE_PATH, 'RGB_CNN_super_resolution_traced_final.pt'))

@@ -50,8 +50,8 @@ test_xr = xr.DataArray(
     }
 )
 
-train_xr_coarse2 = train_xr.coarsen(height=4, width=4, boundary='trim').mean().astype(np.uint8)
-test_xr_coarse2 = test_xr.coarsen(height=4, width=4, boundary='trim').mean().astype(np.uint8)
+train_xr_coarse = train_xr.coarsen(height=4, width=4, boundary='trim').mean().astype(np.uint8)
+test_xr_coarse = test_xr.coarsen(height=4, width=4, boundary='trim').mean().astype(np.uint8)
 
 
 # Save to disk as PNG files
@@ -63,14 +63,14 @@ os.makedirs('data/images/test/coarse', exist_ok=True)
 for i, img_array in enumerate(train_data):
     img_pil = Image.fromarray(img_array.astype(np.uint8))
     img_pil.save(f'data/images/train/original/image_{i:04d}.png')
-    coarse_img = train_xr_coarse2[i].values.astype(np.uint8)
+    coarse_img = train_xr_coarse[i].values.astype(np.uint8)
     coarse_pil = Image.fromarray(coarse_img)
     coarse_pil.save(f'data/images/train/coarse/image_{i:04d}.png')
 
 for i, img_array in enumerate(test_data):
     img_pil = Image.fromarray(img_array.astype(np.uint8))
     img_pil.save(f'data/images/test/original/image_{i:04d}.png')
-    coarse_img = test_xr_coarse2[i].values.astype(np.uint8)
+    coarse_img = test_xr_coarse[i].values.astype(np.uint8)
     coarse_pil = Image.fromarray(coarse_img)
     coarse_pil.save(f'data/images/test/coarse/image_{i:04d}.png')
 
@@ -87,11 +87,11 @@ encoding={
 
 train_xr.name = 'data'
 test_xr.name = 'data'
-train_xr_coarse2.name = 'data'
-test_xr_coarse2.name = 'data'
+train_xr_coarse.name = 'data'
+test_xr_coarse.name = 'data'
 
 train_xr.to_netcdf('data/images/train/original/train.nc', encoding=encoding)
 test_xr.to_netcdf('data/images/test/original/test.nc', encoding=encoding)
-train_xr_coarse2.to_netcdf('data/images/train/coarse/train_coarse2.nc', encoding=encoding)
-test_xr_coarse2.to_netcdf('data/images/test/coarse/test_coarse2.nc', encoding=encoding)
+train_xr_coarse.to_netcdf('data/images/train/coarse/train_coarse.nc', encoding=encoding)
+test_xr_coarse.to_netcdf('data/images/test/coarse/test_coarse.nc', encoding=encoding)
 

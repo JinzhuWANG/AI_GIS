@@ -1,6 +1,6 @@
 # Ignore all data files
-Case_01_super_sample_DEM/data/
-Case_02_fill_temporal_gap.py/data/
+Case_01_parameters_and_feature/data/
+Case_02_CNN_super_sample/data/
 
 installer/
 .conda/

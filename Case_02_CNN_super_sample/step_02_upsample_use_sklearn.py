@@ -8,7 +8,7 @@ from PIL import Image
 # =============================================================================
 
 # Load
-train_coarse_data = xr.open_dataarray('data/images/train/coarse/train_coarse2.nc', chunks='auto')
+train_coarse_data = xr.open_dataarray('data/images/train/coarse/train_coarse.nc', chunks='auto')
 
 # Upsample 
 train_upsampled_data = train_coarse_data.interp(
@@ -46,7 +46,7 @@ for i, train_image_data in enumerate(train_upsampled_data.compute()):
 # =============================================================================
 
 # Load 
-test_coarse_data = xr.open_dataarray('data/images/test/coarse/test_coarse2.nc', chunks='auto')
+test_coarse_data = xr.open_dataarray('data/images/test/coarse/test_coarse.nc', chunks='auto')
 print(f"Test data loaded with shape: {test_coarse_data.shape}")
 
 # Upsample
