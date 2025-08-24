@@ -2,6 +2,9 @@ import numpy as np
 import pandas as pd
 import seaborn as sns
 
+from sklearn.linear_model import LinearRegression
+from tqdm.auto import tqdm
+
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -62,10 +65,10 @@ print(f"Total parameters: {W1.numel() + b1.numel() + W2.numel() + b2.numel()}")
 
 # Training parameters
 learning_rate = 0.01
-epochs = 100000
+epochs = 5000
 
 # Create optimizer
-optimizer = optim.SGD([W1, b1, W2, b2], lr=learning_rate)
+optimizer = optim.Adam([W1, b1, W2, b2], lr=learning_rate)
 
 # Create loss criterion
 criterion = nn.BCELoss()
@@ -77,11 +80,11 @@ for epoch in tqdm(range(epochs)):
     
     # Forward pass
     # Layer 1: Linear transformation + ReLU activation
-    z1 = torch.matmul(X, W1) + b1  # Shape: [N, 8]
+    z1 = X @ W1 + b1  # Shape: [N, 8]
     a1 = torch.relu(z1)            # Shape: [N, 8]
     
     # Layer 2: Linear transformation + Sigmoid activation
-    z2 = torch.matmul(a1, W2) + b2 # Shape: [N, 1]
+    z2 = a1 @ W2 + b2 # Shape: [N, 1]
     y_pred = torch.sigmoid(z2).squeeze()  # Shape: [N]
     
     # Calculate loss
