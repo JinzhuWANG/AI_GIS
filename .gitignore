@@ -1,6 +1,8 @@
 # Ignore all data files except .gitignore
 Case_01_parameters_and_feature/data/*
 !Case_01_parameters_and_feature/data/.gitignore
+Case_02_understand_CNN/data/*
+!Case_02_understand_CNN/data/.gitignore
 Case_03_CNN_super_sample/data/*
 !Case_03_CNN_super_sample/data/.gitignore
 
@@ -15,3 +17,4 @@ __pycache__/
 
 # Ignore VS Code settings
 .vscode/
+.claude/settings.local.json
